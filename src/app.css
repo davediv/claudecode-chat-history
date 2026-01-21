@@ -13,7 +13,7 @@
   /* Text colors */
   --color-text-primary: #0f0f0f;
   --color-text-secondary: #495057;
-  --color-text-muted: #868e96;
+  --color-text-muted: #6b7280;
 
   /* Border colors */
   --color-border: #dee2e6;
@@ -61,7 +61,7 @@
 
   --color-text-primary: #f6f6f6;
   --color-text-secondary: #a3a3a3;
-  --color-text-muted: #737373;
+  --color-text-muted: #8a8a8a;
 
   --color-border: #2d2d2d;
   --color-border-light: #262626;
