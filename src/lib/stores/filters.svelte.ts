@@ -3,19 +3,50 @@
  *
  * Manages filter state for conversation list with reactive updates.
  * Changes automatically trigger conversation list filtering.
+ * Persists filter state to localStorage for session restoration.
  */
 
+import { getStorageItem, setStorageItem, STORAGE_KEYS } from "$lib/utils";
+
+// Type for persisted filter state
+interface PersistedFilters {
+  project: string | null;
+  dateStart: string | null;
+  dateEnd: string | null;
+}
+
+// Load persisted filters from localStorage
+function loadPersistedFilters(): PersistedFilters {
+  const stored = getStorageItem<PersistedFilters>(STORAGE_KEYS.FILTERS);
+  return stored ?? { project: null, dateStart: null, dateEnd: null };
+}
+
+// Initialize with persisted values
+const initialFilters = loadPersistedFilters();
+
 // Reactive filter state using Svelte 5 runes
-let projectFilter = $state<string | null>(null);
-let dateStart = $state<string | null>(null);
-let dateEnd = $state<string | null>(null);
+let projectFilter = $state<string | null>(initialFilters.project);
+let dateStart = $state<string | null>(initialFilters.dateStart);
+let dateEnd = $state<string | null>(initialFilters.dateEnd);
 let searchQuery = $state("");
+
+/**
+ * Persist current filter state to localStorage.
+ */
+function persistFilters(): void {
+  setStorageItem<PersistedFilters>(STORAGE_KEYS.FILTERS, {
+    project: projectFilter,
+    dateStart: dateStart,
+    dateEnd: dateEnd,
+  });
+}
 
 /**
  * Set the project filter.
  */
 export function setProject(project: string | null): void {
   projectFilter = project;
+  persistFilters();
 }
 
 /**
@@ -24,10 +55,12 @@ export function setProject(project: string | null): void {
 export function setDateRange(start: string | null, end: string | null): void {
   dateStart = start;
   dateEnd = end;
+  persistFilters();
 }
 
 /**
  * Set the search query.
+ * Note: Search query is NOT persisted (intentionally fresh each session).
  */
 export function setSearch(query: string): void {
   searchQuery = query;
@@ -41,6 +74,7 @@ export function clearAll(): void {
   dateStart = null;
   dateEnd = null;
   searchQuery = "";
+  persistFilters();
 }
 
 /**

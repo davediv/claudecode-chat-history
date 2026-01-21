@@ -4,10 +4,12 @@
  * Manages conversation list and selection state with reactive updates.
  * Integrates with Tauri IPC for data fetching.
  * Implements LRU caching for conversation details.
+ * Persists selected conversation ID for session restoration.
  */
 
 import type { Conversation, ConversationSummary, ConversationFilters } from "$lib/types";
 import { SvelteMap } from "svelte/reactivity";
+import { getStorageItem, setStorageItem, removeStorageItem, STORAGE_KEYS } from "$lib/utils";
 
 // Reactive state using Svelte 5 runes
 let conversations = $state<ConversationSummary[]>([]);
@@ -130,11 +132,19 @@ export async function load(options?: ConversationFilters): Promise<void> {
 /**
  * Select a conversation by ID and load its full details.
  * Uses LRU cache to avoid refetching previously viewed conversations.
+ * Persists selection to localStorage for session restoration.
  */
 export async function select(id: string | null): Promise<void> {
   if (id === selectedId) return;
 
   selectedId = id;
+
+  // Persist selection to localStorage
+  if (id) {
+    setStorageItem(STORAGE_KEYS.SELECTED_CONVERSATION, id);
+  } else {
+    removeStorageItem(STORAGE_KEYS.SELECTED_CONVERSATION);
+  }
 
   if (!id) {
     selectedConversation = null;
@@ -179,6 +189,26 @@ export async function select(id: string | null): Promise<void> {
 export function clearSelection(): void {
   selectedId = null;
   selectedConversation = null;
+  removeStorageItem(STORAGE_KEYS.SELECTED_CONVERSATION);
+}
+
+/**
+ * Restore the previously selected conversation from localStorage.
+ * Should be called on app startup after conversations are loaded.
+ */
+export async function restoreSelection(): Promise<void> {
+  const savedId = getStorageItem<string>(STORAGE_KEYS.SELECTED_CONVERSATION);
+  if (savedId && conversations.some((c) => c.id === savedId)) {
+    await select(savedId);
+  }
+}
+
+/**
+ * Get the previously selected conversation ID from localStorage.
+ * Useful for checking if restoration is needed without triggering load.
+ */
+export function getPersistedSelectionId(): string | null {
+  return getStorageItem<string>(STORAGE_KEYS.SELECTED_CONVERSATION);
 }
 
 /**
@@ -255,6 +285,8 @@ export const conversationsStore = {
   load,
   select,
   clearSelection,
+  restoreSelection,
+  getPersistedSelectionId,
   setFilters,
   clearFilters,
   setConversations,
