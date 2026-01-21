@@ -42,6 +42,9 @@
       </svg>
       <p>Select a conversation</p>
       <p class="empty-hint">Choose a conversation from the sidebar to view its contents</p>
+      <p class="keyboard-hint">
+        <kbd>j</kbd>/<kbd>k</kbd> to navigate, <kbd>Enter</kbd> to select
+      </p>
     </div>
   {:else}
     <div class="detail-content">
@@ -107,6 +110,23 @@
     font-size: 0.875rem;
     margin-top: 0.5rem !important;
     opacity: 0.7;
+  }
+
+  .keyboard-hint {
+    font-size: 0.75rem;
+    margin-top: 1rem !important;
+    opacity: 0.5;
+  }
+
+  .keyboard-hint kbd {
+    display: inline-block;
+    padding: 0.125rem 0.375rem;
+    margin: 0 0.125rem;
+    background-color: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-family: "SF Mono", Monaco, Menlo, Consolas, monospace;
+    font-size: 0.6875rem;
   }
 
   .detail-content {
