@@ -5,12 +5,14 @@
    * Layout:
    * - Header bar with search and filters
    * - Two-column split: sidebar (conversation list) and detail pane
+   * - Error boundaries for graceful error handling
    */
   import Header from "$lib/components/Header.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import DetailPane from "$lib/components/DetailPane.svelte";
   import ConversationDetail from "$lib/components/ConversationDetail.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
+  import { ErrorBoundary } from "$lib/components";
   import type { Conversation, Message, ContentBlock } from "$lib/types";
 
   // Conversation list state
@@ -162,18 +164,22 @@
   <Header onSearch={handleSearch} />
 
   <div class="main-content">
-    <Sidebar
-      {conversations}
-      selectedId={selectedConversationId}
-      onSelect={handleSelectConversation}
-      isLoading={isLoadingList}
-    />
+    <ErrorBoundary title="Sidebar error" description="Failed to load the conversation list.">
+      <Sidebar
+        {conversations}
+        selectedId={selectedConversationId}
+        onSelect={handleSelectConversation}
+        isLoading={isLoadingList}
+      />
+    </ErrorBoundary>
 
-    <DetailPane hasSelection={selectedConversationId !== null} isLoading={isLoadingDetail}>
-      {#if selectedConversation}
-        <ConversationDetail conversation={selectedConversation} onBack={handleBack} />
-      {/if}
-    </DetailPane>
+    <ErrorBoundary title="Content error" description="Failed to load the conversation details.">
+      <DetailPane hasSelection={selectedConversationId !== null} isLoading={isLoadingDetail}>
+        {#if selectedConversation}
+          <ConversationDetail conversation={selectedConversation} onBack={handleBack} />
+        {/if}
+      </DetailPane>
+    </ErrorBoundary>
   </div>
 
   <!-- Toast notifications -->
