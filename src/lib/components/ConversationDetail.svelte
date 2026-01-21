@@ -8,7 +8,8 @@
    * - Smooth scrolling for long conversations
    * - Back button for narrow screens
    */
-  import type { Conversation, Message } from "$lib/types";
+  import type { Conversation } from "$lib/types";
+  import MessageBubble from "./MessageBubble.svelte";
 
   interface Props {
     /** The conversation to display */
@@ -67,47 +68,6 @@
       return "";
     }
   }
-
-  /**
-   * Format message timestamp for display.
-   */
-  function formatMessageTime(isoString: string): string {
-    try {
-      const date = new Date(isoString);
-      return date.toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      });
-    } catch {
-      return "";
-    }
-  }
-
-  /**
-   * Get the display content from a message's content blocks.
-   */
-  function getMessageContent(message: Message): string {
-    return message.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.content)
-      .join("\n\n");
-  }
-
-  /**
-   * Get role display label.
-   */
-  function getRoleLabel(role: Message["role"]): string {
-    switch (role) {
-      case "user":
-        return "You";
-      case "assistant":
-        return "Claude";
-      case "system":
-        return "System";
-      default:
-        return role;
-    }
-  }
 </script>
 
 <div class="conversation-detail">
@@ -133,18 +93,7 @@
 
   <div class="messages-container">
     {#each conversation.messages as message (message.id)}
-      <article
-        class="message message-{message.role}"
-        aria-label="{getRoleLabel(message.role)} message"
-      >
-        <div class="message-header">
-          <span class="message-role">{getRoleLabel(message.role)}</span>
-          <span class="message-time">{formatMessageTime(message.timestamp)}</span>
-        </div>
-        <div class="message-content">
-          {getMessageContent(message)}
-        </div>
-      </article>
+      <MessageBubble {message} />
     {/each}
   </div>
 </div>
@@ -232,87 +181,8 @@
     scroll-behavior: smooth;
   }
 
-  .message {
-    max-width: 85%;
-    margin-bottom: 1rem;
-    padding: 0.75rem 1rem;
-    border-radius: 12px;
-    animation: messageSlideIn 0.2s ease-out;
-  }
-
-  @keyframes messageSlideIn {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .message-user {
-    margin-left: auto;
-    background-color: var(--color-accent);
-    color: white;
-  }
-
-  .message-user .message-role,
-  .message-user .message-time {
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  .message-assistant {
-    background-color: var(--color-bg-tertiary);
-    color: var(--color-text-primary);
-  }
-
-  .message-system {
-    max-width: 100%;
-    margin-left: auto;
-    margin-right: auto;
-    background-color: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    text-align: center;
-    color: var(--color-text-muted);
-    font-size: 0.8125rem;
-  }
-
-  .message-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.375rem;
-    font-size: 0.75rem;
-  }
-
-  .message-role {
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .message-assistant .message-role {
-    color: var(--color-accent);
-  }
-
-  .message-time {
-    color: var(--color-text-muted);
-    font-size: 0.6875rem;
-  }
-
-  .message-content {
-    font-size: 0.875rem;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-  }
-
   /* Respect reduced motion preference */
   @media (prefers-reduced-motion: reduce) {
-    .message {
-      animation: none;
-    }
-
     .messages-container {
       scroll-behavior: auto;
     }

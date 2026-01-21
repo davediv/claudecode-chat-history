@@ -51,20 +51,68 @@
    */
   function generateMockConversation(id: string): Conversation {
     const convIndex = parseInt(id.replace("conv-", ""), 10);
-    const messageCount = Math.floor(Math.random() * 30) + 5;
+    const messageCount = Math.floor(Math.random() * 20) + 6;
     const baseTime = Date.now() - convIndex * 60 * 60 * 1000;
 
     const messages: Message[] = Array.from({ length: messageCount }, (_, i) => {
       const role: Message["role"] = i % 2 === 0 ? "user" : "assistant";
-      const content: ContentBlock[] = [
-        {
+
+      // Generate varied content blocks for testing
+      const content: ContentBlock[] = [];
+
+      if (role === "user") {
+        content.push({
           type: "text",
-          content:
-            role === "user"
-              ? `This is user message ${i + 1}. How can I implement a feature that does something interesting?`
-              : `Here's my response to your question. Let me explain the approach step by step.\n\nFirst, you would want to consider the architecture and how the components interact with each other.\n\nSecond, implement the core logic with proper error handling.\n\nThird, add tests to ensure everything works correctly.`,
-        },
-      ];
+          content: `This is user message ${i + 1}. How can I implement a feature that does something interesting?`,
+        });
+        // Add code block to some user messages
+        if (i % 4 === 0) {
+          content.push({
+            type: "code",
+            language: "typescript",
+            content: `function example() {\n  console.log("Hello from user");\n  return true;\n}`,
+          });
+        }
+      } else {
+        content.push({
+          type: "text",
+          content: `Here's my response to your question. Let me explain the approach step by step.`,
+        });
+
+        // Add code block to assistant messages
+        if (i % 2 === 1) {
+          content.push({
+            type: "code",
+            language: i % 4 === 1 ? "typescript" : i % 4 === 3 ? "python" : "rust",
+            content:
+              i % 4 === 1
+                ? `interface User {\n  id: string;\n  name: string;\n  email: string;\n}\n\nfunction createUser(data: Partial<User>): User {\n  return {\n    id: crypto.randomUUID(),\n    name: data.name || "Unknown",\n    email: data.email || "",\n  };\n}`
+                : i % 4 === 3
+                  ? `def process_data(items: list) -> dict:\n    """Process a list of items and return stats."""\n    return {\n        "count": len(items),\n        "unique": len(set(items)),\n    }`
+                  : `fn main() {\n    let greeting = "Hello, Rust!";\n    println!("{}", greeting);\n}`,
+          });
+        }
+
+        // Add tool use/result to some messages
+        if (i % 6 === 1) {
+          content.push({
+            type: "tool_use",
+            toolName: "Read",
+            content: `{\n  "file_path": "/src/lib/components/Example.svelte"\n}`,
+          });
+        } else if (i % 6 === 3) {
+          content.push({
+            type: "tool_result",
+            toolName: "Bash",
+            content: `npm run build\n\n> project@1.0.0 build\n> vite build\n\n✓ 42 modules transformed.\nDone in 1.23s`,
+          });
+        }
+
+        content.push({
+          type: "text",
+          content: `That should help you get started with the implementation.`,
+        });
+      }
 
       return {
         id: `msg-${id}-${i}`,
