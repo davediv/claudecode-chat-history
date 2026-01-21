@@ -1,0 +1,2 @@
+{"type":"user","message":{"content":"Show me a Rust hello world","role":"user"},"timestamp":"2025-01-15T11:00:00Z","uuid":"uuid-101","sessionId":"session-code"}
+{"type":"assistant","message":{"content":"Here's a simple Rust hello world:\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n\nThis is the most basic Rust program.","role":"assistant"},"timestamp":"2025-01-15T11:00:05Z","uuid":"uuid-102","sessionId":"session-code","tokenCount":{"input":8,"output":50}}

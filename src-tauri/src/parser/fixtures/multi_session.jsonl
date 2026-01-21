@@ -1,0 +1,6 @@
+{"type":"user","message":{"content":"First session message","role":"user"},"timestamp":"2025-01-15T09:00:00Z","uuid":"uuid-a01","sessionId":"session-A"}
+{"type":"assistant","message":{"content":"Reply to first session","role":"assistant"},"timestamp":"2025-01-15T09:00:05Z","uuid":"uuid-a02","sessionId":"session-A","tokenCount":{"input":5,"output":10}}
+{"type":"user","message":{"content":"Second session message","role":"user"},"timestamp":"2025-01-15T10:00:00Z","uuid":"uuid-b01","sessionId":"session-B"}
+{"type":"assistant","message":{"content":"Reply to second session","role":"assistant"},"timestamp":"2025-01-15T10:00:05Z","uuid":"uuid-b02","sessionId":"session-B","tokenCount":{"input":5,"output":10}}
+{"type":"user","message":{"content":"Another message in first session","role":"user"},"timestamp":"2025-01-15T09:00:10Z","uuid":"uuid-a03","sessionId":"session-A"}
+{"type":"assistant","message":{"content":"Another reply in first session","role":"assistant"},"timestamp":"2025-01-15T09:00:15Z","uuid":"uuid-a04","sessionId":"session-A","tokenCount":{"input":8,"output":12}}

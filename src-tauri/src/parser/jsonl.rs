@@ -1225,4 +1225,494 @@ mod tests {
             other => panic!("Expected Io error, got {:?}", other),
         }
     }
+
+    // ========== Fixture-based tests ==========
+
+    /// Helper to get fixture file path
+    fn get_fixture_path(filename: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("parser")
+            .join("fixtures")
+            .join(filename)
+    }
+
+    #[test]
+    fn test_fixture_valid_simple() {
+        let path = get_fixture_path("valid_simple.jsonl");
+        let result = parse_conversation_file(&path);
+        assert!(result.is_ok(), "Should parse valid_simple.jsonl fixture");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1, "Should have 1 conversation");
+
+        let conv = &conversations[0];
+        assert_eq!(conv.session_id, "session-001");
+        assert_eq!(conv.messages.len(), 4, "Should have 4 messages");
+        assert_eq!(conv.start_time, "2025-01-15T10:00:00Z");
+        assert_eq!(conv.last_time, "2025-01-15T10:00:15Z");
+        // Token counts from assistant messages only (user messages have no tokenCount)
+        // Message 2: input=10, output=25
+        // Message 4: input=15, output=20
+        assert_eq!(conv.total_input_tokens, 25); // 10 + 15
+        assert_eq!(conv.total_output_tokens, 45); // 25 + 20
+    }
+
+    #[test]
+    fn test_fixture_valid_with_code() {
+        let path = get_fixture_path("valid_with_code.jsonl");
+        let result = parse_conversation_file(&path);
+        assert!(result.is_ok(), "Should parse valid_with_code.jsonl fixture");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+
+        let conv = &conversations[0];
+        assert_eq!(conv.session_id, "session-code");
+        assert_eq!(conv.messages.len(), 2);
+
+        // Check the assistant message contains code fence
+        let assistant_msg = &conv.messages[1];
+        match &assistant_msg.message.content {
+            RawContent::Text(text) => {
+                assert!(text.contains("```rust"));
+                assert!(text.contains("fn main()"));
+                assert!(text.contains("println!"));
+            }
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[test]
+    fn test_fixture_valid_with_tools() {
+        let path = get_fixture_path("valid_with_tools.jsonl");
+        let result = parse_conversation_file(&path);
+        assert!(result.is_ok(), "Should parse valid_with_tools.jsonl fixture");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+
+        let conv = &conversations[0];
+        assert_eq!(conv.session_id, "session-tools");
+        assert_eq!(conv.messages.len(), 4);
+
+        // Check tool_use block in assistant message
+        let assistant_msg = &conv.messages[1];
+        match &assistant_msg.message.content {
+            RawContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 2);
+                assert_eq!(blocks[0].block_type, "text");
+                assert_eq!(blocks[1].block_type, "tool_use");
+                assert_eq!(blocks[1].name, Some("read_file".to_string()));
+            }
+            _ => panic!("Expected blocks content"),
+        }
+
+        // Check tool_result block in user message
+        let user_msg = &conv.messages[2];
+        match &user_msg.message.content {
+            RawContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 1);
+                assert_eq!(blocks[0].block_type, "tool_result");
+                assert_eq!(blocks[0].tool_use_id, Some("toolu_001".to_string()));
+            }
+            _ => panic!("Expected blocks content"),
+        }
+    }
+
+    #[test]
+    fn test_fixture_multi_session() {
+        let path = get_fixture_path("multi_session.jsonl");
+        let result = parse_conversation_file(&path);
+        assert!(result.is_ok(), "Should parse multi_session.jsonl fixture");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 2, "Should have 2 sessions");
+
+        // Sessions should be sorted by start_time (newest first)
+        // Session B started at 10:00, Session A at 09:00
+        assert_eq!(conversations[0].session_id, "session-B");
+        assert_eq!(conversations[1].session_id, "session-A");
+
+        // Session A should have 4 messages (out of order in file but sorted)
+        let session_a = &conversations[1];
+        assert_eq!(session_a.messages.len(), 4);
+        assert_eq!(session_a.start_time, "2025-01-15T09:00:00Z");
+        assert_eq!(session_a.last_time, "2025-01-15T09:00:15Z");
+
+        // Session B should have 2 messages
+        let session_b = &conversations[0];
+        assert_eq!(session_b.messages.len(), 2);
+    }
+
+    #[test]
+    fn test_fixture_unicode_content() {
+        let path = get_fixture_path("unicode_content.jsonl");
+        let result = parse_conversation_file(&path);
+        assert!(result.is_ok(), "Should parse unicode_content.jsonl fixture");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+
+        let conv = &conversations[0];
+        assert_eq!(conv.session_id, "session-unicode");
+
+        // Check unicode is preserved in user message
+        let user_msg = &conv.messages[0];
+        match &user_msg.message.content {
+            RawContent::Text(text) => {
+                assert!(text.contains("你好")); // Chinese
+                assert!(text.contains("こんにちは")); // Japanese
+                assert!(text.contains("안녕하세요")); // Korean
+                assert!(text.contains("مرحبا")); // Arabic
+                assert!(text.contains("שלום")); // Hebrew
+            }
+            _ => panic!("Expected text content"),
+        }
+
+        // Check emoji in assistant message
+        let assistant_msg = &conv.messages[1];
+        match &assistant_msg.message.content {
+            RawContent::Text(text) => {
+                assert!(text.contains("🌍"));
+                assert!(text.contains("🎉"));
+                assert!(text.contains("✨"));
+                assert!(text.contains("🚀"));
+            }
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[test]
+    fn test_fixture_with_errors() {
+        let path = get_fixture_path("with_errors.jsonl");
+        let result = parse_conversation_file(&path);
+        assert!(result.is_ok(), "Should parse with_errors.jsonl fixture despite errors");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+
+        let conv = &conversations[0];
+        // Should have 4 valid messages (2 invalid lines skipped)
+        assert_eq!(conv.messages.len(), 4, "Should skip invalid lines and parse 4 valid messages");
+    }
+
+    #[test]
+    fn test_fixture_large_tokens() {
+        let path = get_fixture_path("large_tokens.jsonl");
+        let result = parse_conversation_file(&path);
+        assert!(result.is_ok(), "Should parse large_tokens.jsonl fixture");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+
+        let conv = &conversations[0];
+        // Total: 1000000000 + 500000000 = 1500000000 input
+        // Total: 2000000000 + 1500000000 = 3500000000 output
+        assert_eq!(conv.total_input_tokens, 1_500_000_000);
+        assert_eq!(conv.total_output_tokens, 3_500_000_000);
+    }
+
+    // ========== Additional edge case tests ==========
+
+    #[test]
+    fn test_parse_very_long_content() {
+        // Test content with very long text (10KB)
+        let long_text = "a".repeat(10_000);
+        let line = format!(
+            r#"{{"type":"user","message":{{"content":"{}"}}}}"#,
+            long_text
+        );
+
+        let result = parse_jsonl_line(&line);
+        assert!(result.is_ok(), "Should handle very long content");
+
+        let msg = result.unwrap();
+        match &msg.message.content {
+            RawContent::Text(text) => assert_eq!(text.len(), 10_000),
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[test]
+    fn test_parse_special_characters_in_session_id() {
+        let line = r#"{"type":"user","message":{"content":"Test"},"sessionId":"session/with\\special\"chars:123"}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok(), "Should handle special characters in sessionId");
+
+        let msg = result.unwrap();
+        assert_eq!(
+            msg.session_id,
+            Some(r#"session/with\special"chars:123"#.to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_empty_content_array() {
+        let line = r#"{"type":"assistant","message":{"content":[],"role":"assistant"}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok(), "Should handle empty content array");
+
+        let msg = result.unwrap();
+        match &msg.message.content {
+            RawContent::Blocks(blocks) => assert!(blocks.is_empty()),
+            _ => panic!("Expected empty blocks"),
+        }
+    }
+
+    #[test]
+    fn test_parse_content_with_escaped_characters() {
+        let line = r#"{"type":"user","message":{"content":"Line1\nLine2\tTabbed\r\nWindows"}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok(), "Should handle escaped characters");
+
+        let msg = result.unwrap();
+        match &msg.message.content {
+            RawContent::Text(text) => {
+                assert!(text.contains('\n'));
+                assert!(text.contains('\t'));
+                assert!(text.contains("\r\n"));
+            }
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[test]
+    fn test_parse_zero_token_counts() {
+        let line = r#"{"type":"assistant","message":{"content":"Test"},"tokenCount":{"input":0,"output":0}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok());
+
+        let msg = result.unwrap();
+        let tokens = msg.token_count.unwrap();
+        assert_eq!(tokens.input, 0);
+        assert_eq!(tokens.output, 0);
+    }
+
+    #[test]
+    fn test_parse_negative_token_counts() {
+        // While negative tokens don't make sense, parser should handle them gracefully
+        let line = r#"{"type":"assistant","message":{"content":"Test"},"tokenCount":{"input":-5,"output":-10}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok());
+
+        let msg = result.unwrap();
+        let tokens = msg.token_count.unwrap();
+        assert_eq!(tokens.input, -5);
+        assert_eq!(tokens.output, -10);
+    }
+
+    #[test]
+    fn test_parse_extra_fields_ignored() {
+        // JSON with extra unexpected fields should still parse
+        let line = r#"{"type":"user","message":{"content":"Test","extraField":"ignored"},"unknownField":123,"nested":{"a":1}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok(), "Should ignore extra fields");
+
+        let msg = result.unwrap();
+        assert_eq!(msg.message_type, RawMessageType::User);
+    }
+
+    #[test]
+    fn test_generate_conversation_id_consistency() {
+        // Same inputs should always produce same ID
+        let path = Path::new("/some/long/path/to/project/session.jsonl");
+        let session_id = "my-session-123";
+
+        let id1 = generate_conversation_id(path, session_id);
+        let id2 = generate_conversation_id(path, session_id);
+        let id3 = generate_conversation_id(path, session_id);
+
+        assert_eq!(id1, id2);
+        assert_eq!(id2, id3);
+        assert_eq!(id1.len(), 12);
+    }
+
+    #[test]
+    fn test_generate_conversation_id_different_sessions() {
+        let path = Path::new("/test/session.jsonl");
+
+        let id1 = generate_conversation_id(path, "session-1");
+        let id2 = generate_conversation_id(path, "session-2");
+
+        assert_ne!(id1, id2, "Different sessions should have different IDs");
+    }
+
+    #[test]
+    fn test_extract_project_info_root_path() {
+        let path = Path::new("/session.jsonl");
+        let (project_path, project_name) = extract_project_info(path);
+
+        // Should handle edge case of file at root
+        // Parent of "/session.jsonl" is "/" which converts to "/" string
+        assert_eq!(project_path, "/");
+        // file_name of "/" returns None, so project_name is "unknown"
+        assert_eq!(project_name, "unknown");
+    }
+
+    #[test]
+    fn test_extract_project_info_normal_path() {
+        let path = Path::new("/Users/test/.claude/projects/my-project-hash/session-123.jsonl");
+        let (project_path, project_name) = extract_project_info(path);
+
+        assert_eq!(project_path, "/Users/test/.claude/projects/my-project-hash");
+        assert_eq!(project_name, "my-project-hash");
+    }
+
+    #[test]
+    fn test_calculate_total_tokens_empty() {
+        let messages: Vec<RawMessage> = vec![];
+        let (input, output) = calculate_total_tokens(&messages);
+        assert_eq!(input, 0);
+        assert_eq!(output, 0);
+    }
+
+    #[test]
+    fn test_calculate_total_tokens_all_none() {
+        let messages = vec![
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("test".to_string()),
+                    role: None,
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+            },
+        ];
+        let (input, output) = calculate_total_tokens(&messages);
+        assert_eq!(input, 0);
+        assert_eq!(output, 0);
+    }
+
+    #[test]
+    fn test_parse_message_type_case_sensitive() {
+        // Type should be lowercase
+        let line_upper = r#"{"type":"USER","message":{"content":"Test"}}"#;
+        let result = parse_jsonl_line(line_upper);
+        assert!(result.is_err(), "Should reject uppercase type");
+
+        let line_mixed = r#"{"type":"User","message":{"content":"Test"}}"#;
+        let result = parse_jsonl_line(line_mixed);
+        assert!(result.is_err(), "Should reject mixed case type");
+    }
+
+    #[test]
+    fn test_parse_content_block_with_null_fields() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello","name":null,"input":null}],"role":"assistant"}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok(), "Should handle null optional fields in content blocks");
+
+        let msg = result.unwrap();
+        match &msg.message.content {
+            RawContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 1);
+                assert_eq!(blocks[0].block_type, "text");
+                assert!(blocks[0].name.is_none());
+                assert!(blocks[0].input.is_none());
+            }
+            _ => panic!("Expected blocks content"),
+        }
+    }
+
+    #[test]
+    fn test_conversation_messages_sorted_chronologically() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("project").join("out-of-order.jsonl");
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+
+        // Messages intentionally out of order
+        let content = r#"{"type":"assistant","message":{"content":"Fourth"},"timestamp":"2025-01-15T10:03:00Z","sessionId":"s1"}
+{"type":"user","message":{"content":"First"},"timestamp":"2025-01-15T10:00:00Z","sessionId":"s1"}
+{"type":"assistant","message":{"content":"Second"},"timestamp":"2025-01-15T10:01:00Z","sessionId":"s1"}
+{"type":"user","message":{"content":"Third"},"timestamp":"2025-01-15T10:02:00Z","sessionId":"s1"}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok());
+
+        let conversations = result.unwrap();
+        let msgs = &conversations[0].messages;
+
+        // Verify chronological order
+        for i in 1..msgs.len() {
+            let prev = msgs[i - 1].timestamp.as_deref().unwrap_or("");
+            let curr = msgs[i].timestamp.as_deref().unwrap_or("");
+            assert!(prev <= curr, "Messages should be in chronological order");
+        }
+    }
+
+    #[test]
+    fn test_conversation_with_missing_timestamps() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("project").join("no-timestamps.jsonl");
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+
+        let content = r#"{"type":"user","message":{"content":"No timestamp"},"sessionId":"s1"}
+{"type":"assistant","message":{"content":"Also no timestamp"},"sessionId":"s1"}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok());
+
+        let conversations = result.unwrap();
+        let conv = &conversations[0];
+
+        // start_time and last_time should be empty when no timestamps
+        assert!(conv.start_time.is_empty());
+        assert!(conv.last_time.is_empty());
+    }
+
+    #[test]
+    fn test_deeply_nested_json_in_tool_input() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"complex_tool","tool_use_id":"toolu_deep","input":{"level1":{"level2":{"level3":{"level4":{"value":"deep"}}}}}}],"role":"assistant"}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok(), "Should handle deeply nested JSON in tool input");
+
+        let msg = result.unwrap();
+        match &msg.message.content {
+            RawContent::Blocks(blocks) => {
+                assert_eq!(blocks[0].block_type, "tool_use");
+                let input = blocks[0].input.as_ref().unwrap();
+                assert!(input["level1"]["level2"]["level3"]["level4"]["value"] == "deep");
+            }
+            _ => panic!("Expected blocks content"),
+        }
+    }
+
+    #[test]
+    fn test_tool_result_with_json_content() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_json","content":{"data":[1,2,3],"status":"ok"}}],"role":"user"}}"#;
+
+        let result = parse_jsonl_line(line);
+        assert!(result.is_ok(), "Should handle JSON object as tool_result content");
+
+        let msg = result.unwrap();
+        match &msg.message.content {
+            RawContent::Blocks(blocks) => {
+                assert_eq!(blocks[0].block_type, "tool_result");
+                let content = blocks[0].content.as_ref().unwrap();
+                assert!(content["data"].is_array());
+            }
+            _ => panic!("Expected blocks content"),
+        }
+    }
 }

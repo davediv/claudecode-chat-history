@@ -1,0 +1,4 @@
+{"type":"user","message":{"content":"Large token test","role":"user"},"timestamp":"2025-01-15T15:00:00Z","uuid":"uuid-l01","sessionId":"session-large","tokenCount":{"input":1000000000,"output":0}}
+{"type":"assistant","message":{"content":"Response with large token count","role":"assistant"},"timestamp":"2025-01-15T15:00:05Z","uuid":"uuid-l02","sessionId":"session-large","tokenCount":{"input":0,"output":2000000000}}
+{"type":"user","message":{"content":"Another message","role":"user"},"timestamp":"2025-01-15T15:00:10Z","uuid":"uuid-l03","sessionId":"session-large","tokenCount":{"input":500000000,"output":0}}
+{"type":"assistant","message":{"content":"Final response","role":"assistant"},"timestamp":"2025-01-15T15:00:15Z","uuid":"uuid-l04","sessionId":"session-large","tokenCount":{"input":0,"output":1500000000}}

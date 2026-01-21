@@ -1,0 +1,7 @@
+{"type":"user","message":{"content":"Valid first message","role":"user"},"timestamp":"2025-01-15T14:00:00Z","uuid":"uuid-e01","sessionId":"session-errors"}
+{invalid json line that should be skipped}
+{"type":"assistant","message":{"content":"Valid second message after error","role":"assistant"},"timestamp":"2025-01-15T14:00:05Z","uuid":"uuid-e02","sessionId":"session-errors","tokenCount":{"input":10,"output":15}}
+
+{"type":"user","message":{"content":"Valid message after blank line","role":"user"},"timestamp":"2025-01-15T14:00:10Z","uuid":"uuid-e03","sessionId":"session-errors"}
+{"missing_type":"user","message":{"content":"Missing type field"}}
+{"type":"assistant","message":{"content":"Final valid message","role":"assistant"},"timestamp":"2025-01-15T14:00:15Z","uuid":"uuid-e04","sessionId":"session-errors","tokenCount":{"input":5,"output":8}}
