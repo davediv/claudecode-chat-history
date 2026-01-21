@@ -9,7 +9,9 @@
   import Header from "$lib/components/Header.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import DetailPane from "$lib/components/DetailPane.svelte";
+  import ConversationDetail from "$lib/components/ConversationDetail.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
+  import type { Conversation, Message, ContentBlock } from "$lib/types";
 
   // Search state
   let searchQuery = $state("");
@@ -25,6 +27,7 @@
     }>
   >([]);
   let selectedConversationId = $state<string | null>(null);
+  let selectedConversation = $state<Conversation | null>(null);
   let isLoadingList = $state(false);
   let isLoadingDetail = $state(false);
 
@@ -43,6 +46,49 @@
     }
   });
 
+  /**
+   * Generate mock messages for a selected conversation (development only)
+   */
+  function generateMockConversation(id: string): Conversation {
+    const convIndex = parseInt(id.replace("conv-", ""), 10);
+    const messageCount = Math.floor(Math.random() * 30) + 5;
+    const baseTime = Date.now() - convIndex * 60 * 60 * 1000;
+
+    const messages: Message[] = Array.from({ length: messageCount }, (_, i) => {
+      const role: Message["role"] = i % 2 === 0 ? "user" : "assistant";
+      const content: ContentBlock[] = [
+        {
+          type: "text",
+          content:
+            role === "user"
+              ? `This is user message ${i + 1}. How can I implement a feature that does something interesting?`
+              : `Here's my response to your question. Let me explain the approach step by step.\n\nFirst, you would want to consider the architecture and how the components interact with each other.\n\nSecond, implement the core logic with proper error handling.\n\nThird, add tests to ensure everything works correctly.`,
+        },
+      ];
+
+      return {
+        id: `msg-${id}-${i}`,
+        role,
+        content,
+        timestamp: new Date(baseTime + i * 5 * 60 * 1000).toISOString(),
+        tokenCount: {
+          input: Math.floor(Math.random() * 100),
+          output: Math.floor(Math.random() * 500),
+        },
+      };
+    });
+
+    return {
+      id,
+      projectPath: `/Users/dev/projects/project-${Math.floor(convIndex / 50)}`,
+      projectName: `project-${Math.floor(convIndex / 50)}`,
+      startTime: new Date(baseTime).toISOString(),
+      lastTime: new Date(baseTime + (messageCount - 1) * 5 * 60 * 1000).toISOString(),
+      messages,
+      totalTokens: { input: 500, output: 2000 },
+    };
+  }
+
   function handleSearch(query: string) {
     searchQuery = query;
     // TODO: Implement search filtering
@@ -50,7 +96,20 @@
 
   function handleSelectConversation(id: string) {
     selectedConversationId = id;
-    // TODO: Load conversation detail
+    isLoadingDetail = true;
+
+    // Simulate loading delay in development
+    if (import.meta.env.DEV) {
+      setTimeout(() => {
+        selectedConversation = generateMockConversation(id);
+        isLoadingDetail = false;
+      }, 200);
+    }
+  }
+
+  function handleBack() {
+    selectedConversationId = null;
+    selectedConversation = null;
   }
 </script>
 
@@ -66,7 +125,9 @@
     />
 
     <DetailPane hasSelection={selectedConversationId !== null} isLoading={isLoadingDetail}>
-      <!-- Conversation content will be rendered here -->
+      {#if selectedConversation}
+        <ConversationDetail conversation={selectedConversation} onBack={handleBack} />
+      {/if}
     </DetailPane>
   </div>
 
