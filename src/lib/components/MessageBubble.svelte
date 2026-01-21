@@ -9,6 +9,8 @@
    * - Accessible with ARIA labels
    */
   import type { Message, ContentBlock } from "$lib/types";
+  import CodeBlock from "./CodeBlock.svelte";
+  import { toast } from "$lib/stores/toast.svelte";
 
   interface Props {
     /** The message to display */
@@ -65,32 +67,14 @@
   }
 
   /**
-   * Get language label for display.
+   * Handle code copy feedback.
    */
-  function getLanguageLabel(language: string | undefined): string {
-    if (!language) return "Code";
-    const labels: Record<string, string> = {
-      js: "JavaScript",
-      javascript: "JavaScript",
-      ts: "TypeScript",
-      typescript: "TypeScript",
-      py: "Python",
-      python: "Python",
-      rs: "Rust",
-      rust: "Rust",
-      go: "Go",
-      html: "HTML",
-      css: "CSS",
-      json: "JSON",
-      bash: "Bash",
-      sh: "Shell",
-      sql: "SQL",
-      md: "Markdown",
-      yaml: "YAML",
-      yml: "YAML",
-      svelte: "Svelte",
-    };
-    return labels[language.toLowerCase()] || language;
+  function handleCodeCopy(success: boolean) {
+    if (success) {
+      toast.success("Copied to clipboard!");
+    } else {
+      toast.error("Failed to copy to clipboard");
+    }
   }
 </script>
 
@@ -108,10 +92,7 @@
         <div class="content-text">{block.content}</div>
       {:else if isCodeBlock(block)}
         <div class="content-code">
-          <div class="code-header">
-            <span class="code-language">{getLanguageLabel(block.language)}</span>
-          </div>
-          <pre class="code-block"><code>{block.content}</code></pre>
+          <CodeBlock code={block.content} language={block.language} onCopy={handleCodeCopy} />
         </div>
       {:else if isToolBlock(block)}
         <div class="content-tool">
@@ -232,56 +213,10 @@
     margin-top: 0.75rem;
   }
 
-  /* Code content */
+  /* Code content - wrapper for CodeBlock component */
   .content-code {
-    background-color: var(--color-bg-primary);
     border-radius: 8px;
     overflow: hidden;
-  }
-
-  .message-user .content-code {
-    background-color: rgba(0, 0, 0, 0.2);
-  }
-
-  .code-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.375rem 0.75rem;
-    background-color: var(--color-bg-secondary);
-    border-bottom: 1px solid var(--color-border);
-    font-size: 0.6875rem;
-  }
-
-  .message-user .code-header {
-    background-color: rgba(0, 0, 0, 0.15);
-    border-bottom-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .code-language {
-    color: var(--color-text-muted);
-    font-weight: 500;
-  }
-
-  .message-user .code-language {
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .code-block {
-    margin: 0;
-    padding: 0.75rem;
-    overflow-x: auto;
-    font-family: "SF Mono", Monaco, Menlo, Consolas, monospace;
-    font-size: 0.8125rem;
-    line-height: 1.4;
-  }
-
-  .code-block code {
-    color: var(--color-text-primary);
-  }
-
-  .message-user .code-block code {
-    color: rgba(255, 255, 255, 0.95);
   }
 
   /* Tool content */
