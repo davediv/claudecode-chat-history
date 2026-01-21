@@ -12,7 +12,7 @@
   import DetailPane from "$lib/components/DetailPane.svelte";
   import ConversationDetail from "$lib/components/ConversationDetail.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
-  import { ErrorBoundary } from "$lib/components";
+  import { ErrorBoundary, FilterPills } from "$lib/components";
   import type { Conversation, Message, ContentBlock } from "$lib/types";
 
   // Conversation list state
@@ -141,6 +141,12 @@
     // This callback can be used for additional page-level side effects
   }
 
+  function handleFilterChange() {
+    // Called when filters are cleared from FilterPills
+    // In production, this would trigger a reload of conversations with new filters
+    // For development, the mock data doesn't need to be refreshed
+  }
+
   function handleSelectConversation(id: string) {
     selectedConversationId = id;
     isLoadingDetail = true;
@@ -162,6 +168,7 @@
 
 <div class="app-layout">
   <Header onSearch={handleSearch} />
+  <FilterPills onFilterChange={handleFilterChange} />
 
   <div class="main-content">
     <ErrorBoundary title="Sidebar error" description="Failed to load the conversation list.">

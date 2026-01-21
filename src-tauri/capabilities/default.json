@@ -10,16 +10,11 @@
     "fs:allow-exists",
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [
-        { "path": "$HOME/.claude/projects/**/*" }
-      ]
+      "allow": [{ "path": "$HOME/.claude/projects/**/*" }]
     },
     {
       "identifier": "fs:allow-read-dir",
-      "allow": [
-        { "path": "$HOME/.claude/projects" },
-        { "path": "$HOME/.claude/projects/**" }
-      ]
+      "allow": [{ "path": "$HOME/.claude/projects" }, { "path": "$HOME/.claude/projects/**" }]
     },
     "clipboard-manager:allow-write-text"
   ]
