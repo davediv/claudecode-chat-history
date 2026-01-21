@@ -13,9 +13,6 @@
   import ToastContainer from "$lib/components/ToastContainer.svelte";
   import type { Conversation, Message, ContentBlock } from "$lib/types";
 
-  // Search state
-  let searchQuery = $state("");
-
   // Conversation list state
   let conversations = $state<
     Array<{
@@ -137,9 +134,9 @@
     };
   }
 
-  function handleSearch(query: string) {
-    searchQuery = query;
-    // TODO: Implement search filtering
+  function handleSearch() {
+    // Search is now handled by the searchStore in Header component
+    // This callback can be used for additional page-level side effects
   }
 
   function handleSelectConversation(id: string) {
@@ -162,7 +159,7 @@
 </script>
 
 <div class="app-layout">
-  <Header {searchQuery} onSearch={handleSearch} />
+  <Header onSearch={handleSearch} />
 
   <div class="main-content">
     <Sidebar

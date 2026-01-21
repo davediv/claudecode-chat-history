@@ -3,31 +3,49 @@
    * Header component with search input and filter controls.
    *
    * Features:
-   * - Search input for filtering conversations
-   * - Project filter dropdown (placeholder)
-   * - Date range filter (placeholder)
+   * - Search input with debouncing
+   * - Project filter dropdown
+   * - Date range filter
+   * - Filter integration with stores
    */
+  import SearchInput from "./SearchInput.svelte";
+  import ProjectFilter from "./ProjectFilter.svelte";
+  import DateRangePicker from "./DateRangePicker.svelte";
+  import { searchStore, filtersStore, conversationsStore } from "$lib/stores";
 
   interface Props {
-    /** Current search query */
-    searchQuery?: string;
-    /** Handler for search query changes */
+    /** Handler for search changes */
     onSearch?: (query: string) => void;
+    /** Handler for filter changes */
+    onFilterChange?: () => void;
   }
 
-  let { searchQuery = $bindable(""), onSearch }: Props = $props();
+  let { onSearch, onFilterChange }: Props = $props();
 
-  function handleSearch(event: Event) {
-    const target = event.target as HTMLInputElement;
-    searchQuery = target.value;
-    onSearch?.(searchQuery);
+  /**
+   * Handle search query changes.
+   */
+  function handleSearch(query: string) {
+    searchStore.search(query);
+    onSearch?.(query);
   }
 
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      searchQuery = "";
-      onSearch?.("");
-    }
+  /**
+   * Handle project filter changes.
+   */
+  function handleProjectChange() {
+    // Reload conversations with new filter
+    conversationsStore.load(filtersStore.asConversationFilters);
+    onFilterChange?.();
+  }
+
+  /**
+   * Handle date filter changes.
+   */
+  function handleDateChange() {
+    // Reload conversations with new filter
+    conversationsStore.load(filtersStore.asConversationFilters);
+    onFilterChange?.();
   }
 </script>
 
@@ -37,50 +55,18 @@
   </div>
 
   <div class="header-center">
-    <div class="search-container">
-      <svg
-        class="search-icon"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <circle cx="11" cy="11" r="8"></circle>
-        <path d="m21 21-4.35-4.35"></path>
-      </svg>
-      <input
-        type="text"
-        class="search-input"
-        placeholder="Search conversations..."
-        value={searchQuery}
-        oninput={handleSearch}
-        onkeydown={handleKeydown}
-      />
-      {#if searchQuery}
-        <button
-          class="clear-button"
-          aria-label="Clear search"
-          onclick={() => {
-            searchQuery = "";
-            onSearch?.("");
-          }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 6 6 18M6 6l12 12"></path>
-          </svg>
-        </button>
-      {/if}
-    </div>
+    <SearchInput
+      value={searchStore.query}
+      isSearching={searchStore.isSearching}
+      onSearch={handleSearch}
+    />
   </div>
 
   <div class="header-right">
-    <!-- Placeholder for filter controls -->
-    <button class="filter-button">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-      </svg>
-      Filters
-    </button>
+    <div class="filters">
+      <ProjectFilter onChange={handleProjectChange} />
+      <DateRangePicker onChange={handleDateChange} />
+    </div>
   </div>
 </header>
 
@@ -119,93 +105,20 @@
     white-space: nowrap;
   }
 
-  .search-container {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .search-icon {
-    position: absolute;
-    left: 0.75rem;
-    width: 1rem;
-    height: 1rem;
-    color: var(--color-text-muted);
-    pointer-events: none;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 0.5rem 2rem 0.5rem 2.25rem;
-    background-color: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    color: var(--color-text-primary);
-    transition: border-color 0.15s ease;
-  }
-
-  .search-input::placeholder {
-    color: var(--color-text-muted);
-  }
-
-  .search-input:focus {
-    border-color: var(--color-accent);
-  }
-
-  .clear-button {
-    position: absolute;
-    right: 0.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--color-text-muted);
-    transition:
-      background-color 0.15s ease,
-      color 0.15s ease;
-  }
-
-  .clear-button:hover {
-    background-color: var(--color-bg-tertiary);
-    color: var(--color-text-primary);
-  }
-
-  .clear-button svg {
-    width: 0.875rem;
-    height: 0.875rem;
-  }
-
-  .filter-button {
+  .filters {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    background-color: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    color: var(--color-text-secondary);
-    font-size: 0.875rem;
-    transition:
-      border-color 0.15s ease,
-      background-color 0.15s ease;
-  }
-
-  .filter-button:hover {
-    background-color: var(--color-border-light);
-    border-color: var(--color-accent);
-  }
-
-  .filter-button svg {
-    width: 1rem;
-    height: 1rem;
   }
 
   /* Responsive adjustments */
+  @media (max-width: 900px) {
+    .filters {
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+  }
+
   @media (max-width: 640px) {
     .app-title {
       display: none;
@@ -213,6 +126,10 @@
 
     .header-center {
       max-width: none;
+    }
+
+    .header-right {
+      display: none;
     }
   }
 </style>
