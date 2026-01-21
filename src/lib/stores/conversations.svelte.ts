@@ -3,9 +3,11 @@
  *
  * Manages conversation list and selection state with reactive updates.
  * Integrates with Tauri IPC for data fetching.
+ * Implements LRU caching for conversation details.
  */
 
 import type { Conversation, ConversationSummary, ConversationFilters } from "$lib/types";
+import { SvelteMap } from "svelte/reactivity";
 
 // Reactive state using Svelte 5 runes
 let conversations = $state<ConversationSummary[]>([]);
@@ -16,6 +18,59 @@ let error = $state<string | null>(null);
 
 // Active filters
 let filters = $state<ConversationFilters>({});
+
+// LRU cache for conversation details
+const CACHE_MAX_SIZE = 50; // Maximum number of cached conversations
+const conversationCache = new SvelteMap<string, Conversation>();
+const cacheAccessOrder: string[] = []; // Track access order for LRU
+
+/**
+ * Get a conversation from cache if available.
+ */
+function getCached(id: string): Conversation | undefined {
+  const cached = conversationCache.get(id);
+  if (cached) {
+    // Move to end of access order (most recently used)
+    const index = cacheAccessOrder.indexOf(id);
+    if (index > -1) {
+      cacheAccessOrder.splice(index, 1);
+    }
+    cacheAccessOrder.push(id);
+  }
+  return cached;
+}
+
+/**
+ * Add a conversation to cache, evicting oldest if at capacity.
+ */
+function addToCache(id: string, conversation: Conversation): void {
+  // If at capacity, remove least recently used
+  while (conversationCache.size >= CACHE_MAX_SIZE && cacheAccessOrder.length > 0) {
+    const oldest = cacheAccessOrder.shift();
+    if (oldest) {
+      conversationCache.delete(oldest);
+    }
+  }
+
+  // Add to cache
+  conversationCache.set(id, conversation);
+  cacheAccessOrder.push(id);
+}
+
+/**
+ * Clear the conversation cache.
+ */
+export function clearCache(): void {
+  conversationCache.clear();
+  cacheAccessOrder.length = 0;
+}
+
+/**
+ * Get cache statistics.
+ */
+export function getCacheStats(): { size: number; maxSize: number } {
+  return { size: conversationCache.size, maxSize: CACHE_MAX_SIZE };
+}
 
 /**
  * Get filtered conversations based on active filters.
@@ -74,6 +129,7 @@ export async function load(options?: ConversationFilters): Promise<void> {
 
 /**
  * Select a conversation by ID and load its full details.
+ * Uses LRU cache to avoid refetching previously viewed conversations.
  */
 export async function select(id: string | null): Promise<void> {
   if (id === selectedId) return;
@@ -82,6 +138,13 @@ export async function select(id: string | null): Promise<void> {
 
   if (!id) {
     selectedConversation = null;
+    return;
+  }
+
+  // Check cache first
+  const cached = getCached(id);
+  if (cached) {
+    selectedConversation = cached;
     return;
   }
 
@@ -94,6 +157,8 @@ export async function select(id: string | null): Promise<void> {
       const { invoke } = await import("@tauri-apps/api/core");
       const result = await invoke<Conversation>("get_conversation", { id });
       selectedConversation = result;
+      // Add to cache for future access
+      addToCache(id, result);
     } else {
       // Development mode: conversation details come from +page.svelte
       // Keep existing selectedConversation if set externally
@@ -143,9 +208,14 @@ export function setConversations(data: ConversationSummary[]): void {
 
 /**
  * Set selected conversation directly (for mock data in development).
+ * Also adds to cache for consistent caching behavior.
  */
 export function setSelectedConversation(data: Conversation | null): void {
   selectedConversation = data;
+  // Add to cache if valid conversation
+  if (data && data.id) {
+    addToCache(data.id, data);
+  }
 }
 
 /**
@@ -178,6 +248,9 @@ export const conversationsStore = {
   get filters() {
     return filters;
   },
+  get cacheStats() {
+    return getCacheStats();
+  },
   // Actions
   load,
   select,
@@ -187,4 +260,5 @@ export const conversationsStore = {
   setConversations,
   setSelectedConversation,
   setLoading,
+  clearCache,
 };
