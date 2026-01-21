@@ -72,6 +72,20 @@
   }
 
   /**
+   * Format a number with compact notation for display.
+   * e.g., 1000 -> "1K", 1500000 -> "1.5M"
+   */
+  function formatTokenCount(count: number): string {
+    if (count < 1000) {
+      return count.toLocaleString();
+    } else if (count < 1000000) {
+      return (count / 1000).toFixed(count < 10000 ? 1 : 0) + "K";
+    } else {
+      return (count / 1000000).toFixed(1) + "M";
+    }
+  }
+
+  /**
    * Format a date as relative or absolute depending on recency.
    */
   function formatDate(isoString: string): string {
@@ -138,6 +152,24 @@
           {conversation.messages.length}
           {conversation.messages.length === 1 ? "message" : "messages"}
         </span>
+        {#if conversation.totalTokens && (conversation.totalTokens.input > 0 || conversation.totalTokens.output > 0)}
+          <span class="meta-separator">•</span>
+          <span class="meta-tokens" title="Input tokens / Output tokens">
+            <svg
+              class="token-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M12 6v6l4 2"></path>
+            </svg>
+            {formatTokenCount(conversation.totalTokens.input)} / {formatTokenCount(
+              conversation.totalTokens.output
+            )}
+          </span>
+        {/if}
       </div>
     </div>
 
@@ -282,6 +314,18 @@
 
   .meta-separator {
     opacity: 0.5;
+  }
+
+  .meta-tokens {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .token-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+    opacity: 0.7;
   }
 
   .tags-section {
