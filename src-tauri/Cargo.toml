@@ -25,3 +25,24 @@ tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# SQLite with bundled SQLite (includes FTS5 by default)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# File system watching
+notify = "8"
+
+# Standard directory paths
+dirs = "6"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "2"
+
+# Logging/tracing
+tracing = "0.1"
+
