@@ -15,7 +15,7 @@ use tauri::State;
 use tracing::{debug, info, warn};
 
 /// Pagination parameters for list queries.
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaginationParams {
     /// Maximum number of results (default: 100).
@@ -24,6 +24,15 @@ pub struct PaginationParams {
     /// Number of results to skip (default: 0).
     #[serde(default)]
     pub offset: i32,
+}
+
+impl Default for PaginationParams {
+    fn default() -> Self {
+        Self {
+            limit: default_limit(),
+            offset: 0,
+        }
+    }
 }
 
 fn default_limit() -> i32 {
@@ -376,11 +385,13 @@ pub fn search_conversations(
         // Build the search query
         // Using FTS5 snippet() function to extract context around matches
         // bm25() provides relevance ranking
+        // Note: snippet() returns NULL for external content FTS tables (content=''),
+        // so we use COALESCE to fall back to the conversation preview
         let mut sql = String::from(
             r#"
             SELECT
                 c.id,
-                snippet(conversations_fts, 0, '<mark>', '</mark>', '...', 50) as snippet,
+                COALESCE(snippet(conversations_fts, 0, '<mark>', '</mark>', '...', 50), c.preview) as snippet,
                 bm25(conversations_fts) as rank
             FROM conversations_fts
             INNER JOIN conversations c ON conversations_fts.rowid = c.rowid
@@ -1023,7 +1034,7 @@ mod tests {
         let db = setup_test_db();
 
         // Query with single character should return empty results
-        let result = db.with_connection(|conn| {
+        let result = db.with_connection(|_conn| {
             // Simulate the check in search_conversations
             let query = "a";
             if query.len() < 2 {
@@ -1106,5 +1117,696 @@ mod tests {
 
         assert!(conv_result.is_some(), "Should find conversation for FTS rowid");
         assert_eq!(conv_result.unwrap(), "conv1");
+    }
+
+    // ========== Integration Tests using Tauri Mock Runtime ==========
+    //
+    // These tests invoke the actual command functions via Tauri's test harness,
+    // testing the full command signature including State extraction.
+
+    mod integration {
+        use super::*;
+        use crate::db::sqlite::Database;
+        use std::sync::Arc;
+        use tauri::test::mock_builder;
+        use tauri::Manager;
+        use tempfile::tempdir;
+
+        /// Creates a test database with schema initialized.
+        fn create_test_database() -> (Arc<Database>, tempfile::TempDir) {
+            let temp_dir = tempdir().unwrap();
+            let db_path = temp_dir.path().join("integration_test.db");
+            let db = Database::open(db_path).unwrap();
+            db.init_schema().unwrap();
+            (Arc::new(db), temp_dir)
+        }
+
+        /// Seeds the database with test conversations.
+        fn seed_test_conversations(db: &Database) {
+            db.with_connection(|conn| {
+                // Insert multiple conversations across different projects
+                conn.execute(
+                    r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                    VALUES ('integ-conv-1', '/home/user/alpha', 'alpha-project', '2025-01-01T08:00:00Z', '2025-01-01T10:00:00Z', 'First conversation about Rust', 10, 500, 1000, '/test/alpha1.jsonl', '2025-01-01T10:00:00Z')"#,
+                    [],
+                )?;
+                conn.execute(
+                    r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                    VALUES ('integ-conv-2', '/home/user/beta', 'beta-project', '2025-01-02T09:00:00Z', '2025-01-02T12:00:00Z', 'Discussion about TypeScript generics', 15, 750, 1500, '/test/beta1.jsonl', '2025-01-02T12:00:00Z')"#,
+                    [],
+                )?;
+                conn.execute(
+                    r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                    VALUES ('integ-conv-3', '/home/user/alpha', 'alpha-project', '2025-01-03T14:00:00Z', '2025-01-03T16:00:00Z', 'Debugging async code patterns', 20, 1000, 2000, '/test/alpha2.jsonl', '2025-01-03T16:00:00Z')"#,
+                    [],
+                )?;
+                Ok(())
+            }).unwrap();
+        }
+
+        /// Seeds the FTS index for search tests.
+        fn seed_fts_index(db: &Database) {
+            db.with_connection(|conn| {
+                // Get rowids for conversations
+                let rowid1: i64 = conn.query_row(
+                    "SELECT rowid FROM conversations WHERE id = 'integ-conv-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let rowid2: i64 = conn.query_row(
+                    "SELECT rowid FROM conversations WHERE id = 'integ-conv-2'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let rowid3: i64 = conn.query_row(
+                    "SELECT rowid FROM conversations WHERE id = 'integ-conv-3'",
+                    [],
+                    |row| row.get(0),
+                )?;
+
+                // Insert FTS content
+                conn.execute(
+                    "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (?1, 'Rust programming language memory safety ownership', 'alpha-project')",
+                    [rowid1],
+                )?;
+                conn.execute(
+                    "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (?1, 'TypeScript generics advanced type inference', 'beta-project')",
+                    [rowid2],
+                )?;
+                conn.execute(
+                    "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (?1, 'async await debugging tokio runtime patterns', 'alpha-project')",
+                    [rowid3],
+                )?;
+                Ok(())
+            }).unwrap();
+        }
+
+        /// Seeds bookmarks and tags for filter tests.
+        fn seed_bookmarks_and_tags(db: &Database) {
+            db.with_connection(|conn| {
+                let now = chrono::Utc::now().to_rfc3339();
+                // Bookmark conv-1
+                conn.execute(
+                    "INSERT INTO bookmarks (conversation_id, created_at) VALUES ('integ-conv-1', ?1)",
+                    [&now],
+                )?;
+                // Add tags to conv-1 and conv-3
+                conn.execute(
+                    "INSERT INTO conversation_tags (conversation_id, tag, created_at) VALUES ('integ-conv-1', 'rust', ?1)",
+                    [&now],
+                )?;
+                conn.execute(
+                    "INSERT INTO conversation_tags (conversation_id, tag, created_at) VALUES ('integ-conv-1', 'important', ?1)",
+                    [&now],
+                )?;
+                conn.execute(
+                    "INSERT INTO conversation_tags (conversation_id, tag, created_at) VALUES ('integ-conv-3', 'debugging', ?1)",
+                    [&now],
+                )?;
+                Ok(())
+            }).unwrap();
+        }
+
+        // ========== get_conversations integration tests ==========
+
+        #[test]
+        fn test_get_conversations_via_tauri_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            // Build mock Tauri app with managed state
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            // Get state from app and invoke command
+            let state = app.state::<Arc<Database>>();
+            let result = get_conversations(state, None, None);
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 3);
+            // Should be sorted by last_time descending
+            assert_eq!(conversations[0].id, "integ-conv-3");
+            assert_eq!(conversations[1].id, "integ-conv-2");
+            assert_eq!(conversations[2].id, "integ-conv-1");
+        }
+
+        #[test]
+        fn test_get_conversations_with_project_filter_via_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let filters = ConversationFilters {
+                project: Some("alpha-project".to_string()),
+                ..Default::default()
+            };
+            let result = get_conversations(state, Some(filters), None);
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 2);
+            assert!(conversations.iter().all(|c| c.project_name == "alpha-project"));
+        }
+
+        #[test]
+        fn test_get_conversations_with_pagination_via_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let pagination = PaginationParams {
+                limit: 2,
+                offset: 1,
+            };
+            let result = get_conversations(state, None, Some(pagination));
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 2);
+            // Offset 1 skips conv-3, returns conv-2 and conv-1
+            assert_eq!(conversations[0].id, "integ-conv-2");
+            assert_eq!(conversations[1].id, "integ-conv-1");
+        }
+
+        #[test]
+        fn test_get_conversations_with_date_range_filter() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let filters = ConversationFilters {
+                date_start: Some("2025-01-02T00:00:00Z".to_string()),
+                date_end: Some("2025-01-02T23:59:59Z".to_string()),
+                ..Default::default()
+            };
+            let result = get_conversations(state, Some(filters), None);
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 1);
+            assert_eq!(conversations[0].id, "integ-conv-2");
+        }
+
+        #[test]
+        fn test_get_conversations_with_bookmark_filter() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_bookmarks_and_tags(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let filters = ConversationFilters {
+                bookmarked: Some(true),
+                ..Default::default()
+            };
+            let result = get_conversations(state, Some(filters), None);
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 1);
+            assert_eq!(conversations[0].id, "integ-conv-1");
+            assert!(conversations[0].bookmarked);
+        }
+
+        #[test]
+        fn test_get_conversations_with_tags_filter() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_bookmarks_and_tags(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let filters = ConversationFilters {
+                tags: Some(vec!["rust".to_string()]),
+                ..Default::default()
+            };
+            let result = get_conversations(state, Some(filters), None);
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 1);
+            assert_eq!(conversations[0].id, "integ-conv-1");
+        }
+
+        #[test]
+        fn test_get_conversations_empty_database() {
+            let (db, _temp_dir) = create_test_database();
+            // Don't seed any data
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = get_conversations(state, None, None);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        // ========== get_projects integration tests ==========
+
+        #[test]
+        fn test_get_projects_via_tauri_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = get_projects(state);
+
+            assert!(result.is_ok());
+            let projects = result.unwrap();
+            assert_eq!(projects.len(), 2);
+            // Should be sorted alphabetically
+            assert_eq!(projects[0].project_name, "alpha-project");
+            assert_eq!(projects[0].conversation_count, 2);
+            assert_eq!(projects[1].project_name, "beta-project");
+            assert_eq!(projects[1].conversation_count, 1);
+        }
+
+        #[test]
+        fn test_get_projects_empty_database() {
+            let (db, _temp_dir) = create_test_database();
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = get_projects(state);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        #[test]
+        fn test_get_projects_last_activity_tracking() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = get_projects(state);
+
+            assert!(result.is_ok());
+            let projects = result.unwrap();
+            // alpha-project has conv-3 as latest (2025-01-03T16:00:00Z)
+            let alpha = projects.iter().find(|p| p.project_name == "alpha-project").unwrap();
+            assert_eq!(alpha.last_activity, "2025-01-03T16:00:00Z");
+        }
+
+        // ========== search_conversations integration tests ==========
+
+        #[test]
+        fn test_search_conversations_via_tauri_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_fts_index(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = search_conversations(state, "Rust".to_string(), None);
+
+            assert!(result.is_ok());
+            let results = result.unwrap();
+            assert!(!results.is_empty());
+            assert!(results.iter().any(|r| r.conversation_id == "integ-conv-1"));
+        }
+
+        #[test]
+        fn test_search_conversations_with_project_filter() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_fts_index(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let filters = ConversationFilters {
+                project: Some("alpha-project".to_string()),
+                ..Default::default()
+            };
+            // Search for "async" which is in conv-3 (alpha-project)
+            let result = search_conversations(state, "async".to_string(), Some(filters));
+
+            assert!(result.is_ok());
+            let results = result.unwrap();
+            assert!(!results.is_empty());
+            assert_eq!(results[0].conversation_id, "integ-conv-3");
+        }
+
+        #[test]
+        fn test_search_conversations_query_too_short() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_fts_index(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = search_conversations(state, "a".to_string(), None);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        #[test]
+        fn test_search_conversations_no_matches() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_fts_index(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = search_conversations(state, "nonexistentxyzterm".to_string(), None);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        #[test]
+        fn test_search_conversations_phrase_query() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_fts_index(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            // Multi-word query becomes phrase search
+            let result = search_conversations(state, "memory safety".to_string(), None);
+
+            assert!(result.is_ok());
+            let results = result.unwrap();
+            assert!(!results.is_empty());
+            assert_eq!(results[0].conversation_id, "integ-conv-1");
+        }
+
+        // ========== toggle_bookmark integration tests ==========
+
+        #[test]
+        fn test_toggle_bookmark_via_tauri_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+
+            // First toggle - should bookmark
+            let result = toggle_bookmark(state.clone(), "integ-conv-2".to_string());
+            assert!(result.is_ok());
+            assert!(result.unwrap(), "Should return true when bookmarking");
+
+            // Second toggle - should unbookmark
+            let result = toggle_bookmark(state, "integ-conv-2".to_string());
+            assert!(result.is_ok());
+            assert!(!result.unwrap(), "Should return false when unbookmarking");
+        }
+
+        #[test]
+        fn test_toggle_bookmark_reflects_in_get_conversations() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+
+            // Bookmark conv-2
+            toggle_bookmark(state.clone(), "integ-conv-2".to_string()).unwrap();
+
+            // Verify it shows up in bookmarked filter
+            let filters = ConversationFilters {
+                bookmarked: Some(true),
+                ..Default::default()
+            };
+            let result = get_conversations(state, Some(filters), None);
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 1);
+            assert_eq!(conversations[0].id, "integ-conv-2");
+        }
+
+        // ========== set_tags integration tests ==========
+
+        #[test]
+        fn test_set_tags_via_tauri_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let tags = vec!["rust".to_string(), "performance".to_string()];
+            let result = set_tags(state, "integ-conv-1".to_string(), tags);
+
+            assert!(result.is_ok());
+            let returned_tags = result.unwrap();
+            assert_eq!(returned_tags.len(), 2);
+            assert!(returned_tags.contains(&"rust".to_string()));
+            assert!(returned_tags.contains(&"performance".to_string()));
+        }
+
+        #[test]
+        fn test_set_tags_normalizes_to_lowercase() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let tags = vec!["RUST".to_string(), "TypeScript".to_string()];
+            let result = set_tags(state, "integ-conv-1".to_string(), tags);
+
+            assert!(result.is_ok());
+            let returned_tags = result.unwrap();
+            assert!(returned_tags.contains(&"rust".to_string()));
+            assert!(returned_tags.contains(&"typescript".to_string()));
+        }
+
+        #[test]
+        fn test_set_tags_replaces_existing() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_bookmarks_and_tags(&db); // conv-1 has "rust" and "important" tags
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            // Replace with new tags
+            let tags = vec!["new-tag".to_string()];
+            let result = set_tags(state, "integ-conv-1".to_string(), tags);
+
+            assert!(result.is_ok());
+            let returned_tags = result.unwrap();
+            assert_eq!(returned_tags.len(), 1);
+            assert_eq!(returned_tags[0], "new-tag");
+        }
+
+        #[test]
+        fn test_set_tags_empty_removes_all() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_bookmarks_and_tags(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = set_tags(state, "integ-conv-1".to_string(), vec![]);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        // ========== get_all_tags integration tests ==========
+
+        #[test]
+        fn test_get_all_tags_via_tauri_state() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_bookmarks_and_tags(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = get_all_tags(state);
+
+            assert!(result.is_ok());
+            let tags = result.unwrap();
+            assert_eq!(tags.len(), 3);
+            // Sorted alphabetically
+            assert_eq!(tags[0].tag, "debugging");
+            assert_eq!(tags[0].count, 1);
+            assert_eq!(tags[1].tag, "important");
+            assert_eq!(tags[1].count, 1);
+            assert_eq!(tags[2].tag, "rust");
+            assert_eq!(tags[2].count, 1);
+        }
+
+        #[test]
+        fn test_get_all_tags_empty_database() {
+            let (db, _temp_dir) = create_test_database();
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+            let result = get_all_tags(state);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        // ========== Error condition tests ==========
+
+        #[test]
+        fn test_combined_filters_work_together() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+            seed_bookmarks_and_tags(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+
+            // Filter: alpha-project + bookmarked
+            let filters = ConversationFilters {
+                project: Some("alpha-project".to_string()),
+                bookmarked: Some(true),
+                ..Default::default()
+            };
+            let result = get_conversations(state, Some(filters), None);
+
+            assert!(result.is_ok());
+            let conversations = result.unwrap();
+            assert_eq!(conversations.len(), 1);
+            assert_eq!(conversations[0].id, "integ-conv-1");
+        }
+
+        #[test]
+        fn test_filters_with_no_matching_results() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+
+            let filters = ConversationFilters {
+                project: Some("nonexistent-project".to_string()),
+                ..Default::default()
+            };
+            let result = get_conversations(state, Some(filters), None);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        #[test]
+        fn test_pagination_beyond_available_data() {
+            let (db, _temp_dir) = create_test_database();
+            seed_test_conversations(&db);
+
+            let app = mock_builder()
+                .manage(db.clone())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("failed to build mock app");
+
+            let state = app.state::<Arc<Database>>();
+
+            let pagination = PaginationParams {
+                limit: 10,
+                offset: 100, // Beyond available data
+            };
+            let result = get_conversations(state, None, Some(pagination));
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
     }
 }
