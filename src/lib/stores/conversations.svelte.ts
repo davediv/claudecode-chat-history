@@ -20,7 +20,7 @@ let error = $state<string | null>(null);
 let filters = $state<ConversationFilters>({});
 
 // LRU cache for conversation details
-const CACHE_MAX_SIZE = 50; // Maximum number of cached conversations
+const CACHE_MAX_SIZE = 100; // Maximum number of cached conversations (configurable)
 const conversationCache = new SvelteMap<string, Conversation>();
 const cacheAccessOrder: string[] = []; // Track access order for LRU
 
