@@ -489,6 +489,7 @@ dependencies = [
  "chrono",
  "dirs",
  "notify",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
