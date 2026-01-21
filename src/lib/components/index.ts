@@ -1,2 +1,2 @@
 // Svelte components
-// Export components here as they are created
+export { default as SearchInput } from "./SearchInput.svelte";
