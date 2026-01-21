@@ -155,4 +155,15 @@
   .toast-info .toast-icon {
     color: var(--color-info);
   }
+
+  /* Respect reduced motion preference - toast appears instantly */
+  @media (prefers-reduced-motion: reduce) {
+    .toast {
+      animation: none;
+    }
+
+    .toast-dismiss {
+      transition: none;
+    }
+  }
 </style>
