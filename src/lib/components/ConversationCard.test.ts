@@ -8,7 +8,7 @@
  * - Date formatting logic
  * - Preview truncation
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import ConversationCard from "./ConversationCard.svelte";
