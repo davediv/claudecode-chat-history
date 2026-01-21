@@ -3,5 +3,24 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "fs:default",
+    "fs:allow-exists",
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        { "path": "$HOME/.claude/projects/**/*" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [
+        { "path": "$HOME/.claude/projects" },
+        { "path": "$HOME/.claude/projects/**" }
+      ]
+    },
+    "clipboard-manager:allow-write-text"
+  ]
 }
