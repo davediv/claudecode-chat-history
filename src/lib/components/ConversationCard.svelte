@@ -12,13 +12,13 @@
     /** Unique conversation ID */
     id: string;
     /** Project name to display */
-    projectName: string;
+    projectName?: string;
     /** Preview text (first message excerpt) */
-    preview: string;
+    preview?: string;
     /** Last activity time (ISO 8601) */
-    lastTime: string;
+    lastTime?: string;
     /** Number of messages in conversation */
-    messageCount: number;
+    messageCount?: number;
     /** Whether this card is currently selected */
     isSelected?: boolean;
     /** Handler for card selection */
@@ -27,13 +27,17 @@
 
   let {
     id,
-    projectName,
-    preview,
+    projectName = "Unknown project",
+    preview = "No preview available",
     lastTime,
-    messageCount,
+    messageCount = 0,
     isSelected = false,
     onSelect,
   }: Props = $props();
+
+  // Display values with fallbacks for missing data
+  const displayProjectName = $derived(projectName || "Unknown project");
+  const displayPreview = $derived(preview || "No preview available");
 
   /**
    * Format a date as relative ("2 hours ago") if < 7 days,
@@ -103,11 +107,13 @@
   onkeydown={handleKeydown}
 >
   <div class="card-header">
-    <span class="project-name" title={projectName}>{projectName}</span>
-    <span class="timestamp">{formatRelativeDate(lastTime)}</span>
+    <span class="project-name" title={displayProjectName}>{displayProjectName}</span>
+    <span class="timestamp">{lastTime ? formatRelativeDate(lastTime) : "Unknown date"}</span>
   </div>
 
-  <p class="preview" title={preview}>{truncatePreview(preview)}</p>
+  <p class="preview" class:placeholder={!preview} title={displayPreview}>
+    {truncatePreview(displayPreview)}
+  </p>
 
   <div class="card-footer">
     <span class="message-count">
@@ -187,6 +193,11 @@
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .preview.placeholder {
+    color: var(--color-text-muted);
+    font-style: italic;
   }
 
   .card-footer {

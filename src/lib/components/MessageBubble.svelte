@@ -21,10 +21,16 @@
 
   let { message, showTimestamp = true }: Props = $props();
 
+  // Graceful handling of missing content
+  const hasContent = $derived(
+    message.content && Array.isArray(message.content) && message.content.length > 0
+  );
+
   /**
    * Format message timestamp for display.
    */
-  function formatTime(isoString: string): string {
+  function formatTime(isoString: string | undefined): string {
+    if (!isoString) return "";
     try {
       const date = new Date(isoString);
       return date.toLocaleTimeString("en-US", {
@@ -87,37 +93,45 @@
   </div>
 
   <div class="message-content">
-    {#each message.content as block, index (index)}
-      {#if block.type === "text"}
-        <div class="content-text">{block.content}</div>
-      {:else if isCodeBlock(block)}
-        <div class="content-code">
-          <CodeBlock code={block.content} language={block.language} onCopy={handleCodeCopy} />
-        </div>
-      {:else if isToolBlock(block)}
-        <div class="content-tool">
-          <div class="tool-header">
-            <span class="tool-icon">
-              {#if block.type === "tool_use"}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path
-                    d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-                  ></path>
-                </svg>
-              {:else}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              {/if}
-            </span>
-            <span class="tool-name"
-              >{block.toolName || (block.type === "tool_use" ? "Tool Call" : "Tool Result")}</span
-            >
+    {#if hasContent}
+      {#each message.content as block, index (index)}
+        {#if block.type === "text"}
+          <div class="content-text">{block.content || ""}</div>
+        {:else if isCodeBlock(block)}
+          <div class="content-code">
+            <CodeBlock
+              code={block.content || ""}
+              language={block.language}
+              onCopy={handleCodeCopy}
+            />
           </div>
-          <pre class="tool-content"><code>{block.content}</code></pre>
-        </div>
-      {/if}
-    {/each}
+        {:else if isToolBlock(block)}
+          <div class="content-tool">
+            <div class="tool-header">
+              <span class="tool-icon" aria-hidden="true">
+                {#if block.type === "tool_use"}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path
+                      d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+                    ></path>
+                  </svg>
+                {:else}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                {/if}
+              </span>
+              <span class="tool-name"
+                >{block.toolName || (block.type === "tool_use" ? "Tool Call" : "Tool Result")}</span
+              >
+            </div>
+            <pre class="tool-content"><code>{block.content || ""}</code></pre>
+          </div>
+        {/if}
+      {/each}
+    {:else}
+      <div class="content-empty">No content available</div>
+    {/if}
   </div>
 </article>
 
@@ -193,6 +207,13 @@
   .message-content {
     font-size: 0.875rem;
     line-height: 1.5;
+  }
+
+  /* Empty content state */
+  .content-empty {
+    color: var(--color-text-muted);
+    font-style: italic;
+    font-size: 0.8125rem;
   }
 
   /* Text content */
