@@ -10,6 +10,7 @@
    * - Graceful fallback for unknown languages
    */
   import { codeToHtml } from "shiki/bundle/web";
+  import { copyToClipboard } from "$lib/services";
 
   interface Props {
     /** Code content to highlight */
@@ -117,17 +118,17 @@
   }
 
   /**
-   * Copy code to clipboard.
+   * Copy code to clipboard using Tauri clipboard API.
    */
   async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(code);
+    const success = await copyToClipboard(code);
+    if (success) {
       isCopied = true;
       onCopy?.(true);
       setTimeout(() => {
         isCopied = false;
       }, 2000);
-    } catch {
+    } else {
       onCopy?.(false);
     }
   }
