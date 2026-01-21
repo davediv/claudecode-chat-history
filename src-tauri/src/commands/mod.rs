@@ -5,7 +5,8 @@
 
 use crate::db::sqlite::{Database, DbError};
 use crate::models::{
-    Conversation, ConversationFilters, ConversationSummary, Message, MessageRole, TokenCount,
+    Conversation, ConversationFilters, ConversationSummary, Message, MessageRole, ProjectInfo,
+    TokenCount,
 };
 use crate::parser::{parse_content_blocks, parse_conversation_file, ParserError, RawMessageType};
 use std::path::Path;
@@ -260,6 +261,48 @@ pub fn get_conversation(
         bookmarked: None,
         tags: None,
     })
+}
+
+/// Gets a list of all projects with conversation counts.
+///
+/// # Arguments
+/// * `db` - Database state
+///
+/// # Returns
+/// * `Vec<ProjectInfo>` - List of projects sorted alphabetically by name
+#[tauri::command]
+pub fn get_projects(db: State<'_, Arc<Database>>) -> Result<Vec<ProjectInfo>, CommandError> {
+    debug!("get_projects");
+
+    db.with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT project_path, project_name, COUNT(*) as conversation_count, MAX(last_time) as last_activity
+            FROM conversations
+            GROUP BY project_path, project_name
+            ORDER BY project_name ASC
+            "#,
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(ProjectInfo {
+                project_path: row.get(0)?,
+                project_name: row.get(1)?,
+                conversation_count: row.get(2)?,
+                last_activity: row.get(3)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row_result in rows {
+            results.push(row_result?);
+        }
+
+        info!("get_projects: returned {} projects", results.len());
+
+        Ok(results)
+    })
+    .map_err(CommandError::from)
 }
 
 /// Internal struct for conversation metadata from DB.
@@ -572,5 +615,81 @@ mod tests {
         assert_eq!(metadata.id, "test-123");
         assert_eq!(metadata.project_path, "/home/user/project");
         assert_eq!(metadata.project_name, "my-project");
+    }
+
+    // ========== get_projects tests ==========
+
+    #[test]
+    fn test_get_projects_empty() {
+        let db = setup_test_db();
+
+        let result = db.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT project_path, project_name, COUNT(*) as conversation_count, MAX(last_time) as last_activity FROM conversations GROUP BY project_path, project_name ORDER BY project_name ASC"
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ProjectInfo {
+                    project_path: row.get(0)?,
+                    project_name: row.get(1)?,
+                    conversation_count: row.get(2)?,
+                    last_activity: row.get(3)?,
+                })
+            })?;
+            let results: Vec<ProjectInfo> = rows.filter_map(|r| r.ok()).collect();
+            Ok(results)
+        }).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_projects_with_data() {
+        let db = setup_test_db();
+
+        // Insert conversations from different projects
+        db.with_connection(|conn| {
+            conn.execute(
+                r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                VALUES ('conv1', '/path/to/zebra', 'zebra-project', '2025-01-01T00:00:00Z', '2025-01-10T00:00:00Z', 'Test', 5, 100, 200, '/test/file1.jsonl', '2025-01-01T00:00:00Z')"#,
+                [],
+            )?;
+            conn.execute(
+                r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                VALUES ('conv2', '/path/to/alpha', 'alpha-project', '2025-01-01T00:00:00Z', '2025-01-15T00:00:00Z', 'Test', 3, 50, 100, '/test/file2.jsonl', '2025-01-01T00:00:00Z')"#,
+                [],
+            )?;
+            conn.execute(
+                r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                VALUES ('conv3', '/path/to/alpha', 'alpha-project', '2025-01-02T00:00:00Z', '2025-01-20T00:00:00Z', 'Test', 7, 150, 300, '/test/file3.jsonl', '2025-01-02T00:00:00Z')"#,
+                [],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let result = db.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT project_path, project_name, COUNT(*) as conversation_count, MAX(last_time) as last_activity FROM conversations GROUP BY project_path, project_name ORDER BY project_name ASC"
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ProjectInfo {
+                    project_path: row.get(0)?,
+                    project_name: row.get(1)?,
+                    conversation_count: row.get(2)?,
+                    last_activity: row.get(3)?,
+                })
+            })?;
+            let results: Vec<ProjectInfo> = rows.filter_map(|r| r.ok()).collect();
+            Ok(results)
+        }).unwrap();
+
+        assert_eq!(result.len(), 2);
+        // Should be sorted alphabetically by project_name
+        assert_eq!(result[0].project_name, "alpha-project");
+        assert_eq!(result[0].conversation_count, 2);
+        assert_eq!(result[0].last_activity, "2025-01-20T00:00:00Z");
+
+        assert_eq!(result[1].project_name, "zebra-project");
+        assert_eq!(result[1].conversation_count, 1);
+        assert_eq!(result[1].last_activity, "2025-01-10T00:00:00Z");
     }
 }
