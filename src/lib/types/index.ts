@@ -70,6 +70,8 @@ export interface ConversationSummary {
   preview: string;
   /** Total number of messages */
   messageCount: number;
+  /** Whether this conversation is bookmarked */
+  bookmarked: boolean;
 }
 
 /**
@@ -82,6 +84,8 @@ export interface ConversationFilters {
   dateStart?: string; // ISO 8601 format
   /** End of date range (inclusive) */
   dateEnd?: string; // ISO 8601 format
+  /** Filter by bookmark status */
+  bookmarked?: boolean;
 }
 
 /**

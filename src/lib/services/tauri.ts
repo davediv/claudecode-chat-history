@@ -227,6 +227,28 @@ export async function listenToConversationsUpdated(
 }
 
 /**
+ * Toggle the bookmark status of a conversation.
+ *
+ * @param conversationId - ID of the conversation to toggle
+ * @returns The new bookmark status (true if now bookmarked, false if unbookmarked)
+ * @throws TauriError if operation fails
+ */
+export async function toggleBookmark(conversationId: string): Promise<boolean> {
+  const invoke = await getInvoke();
+
+  if (!invoke) {
+    throw new TauriError("Not in Tauri environment", "NOT_AVAILABLE");
+  }
+
+  try {
+    const result = await invoke<boolean>("toggle_bookmark", { conversationId });
+    return result;
+  } catch (error) {
+    throw wrapError(error, "toggleBookmark");
+  }
+}
+
+/**
  * Tauri service object for convenience import.
  */
 export const tauriService = {
@@ -235,5 +257,6 @@ export const tauriService = {
   getConversation,
   getProjects,
   searchConversations,
+  toggleBookmark,
   listenToConversationsUpdated,
 };

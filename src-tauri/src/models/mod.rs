@@ -105,6 +105,9 @@ pub struct ConversationSummary {
     pub preview: String,
     /// Total number of messages.
     pub message_count: i32,
+    /// Whether this conversation is bookmarked.
+    #[serde(default)]
+    pub bookmarked: bool,
 }
 
 /// Filter options for querying conversations.
@@ -120,6 +123,9 @@ pub struct ConversationFilters {
     /// End of date range (inclusive, ISO 8601).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_end: Option<String>,
+    /// Filter by bookmark status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bookmarked: Option<bool>,
 }
 
 /// A search result with matching conversation info.

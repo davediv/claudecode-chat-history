@@ -15,6 +15,7 @@
     preview: string;
     lastTime: string;
     messageCount: number;
+    bookmarked: boolean;
   }
 
   interface Props {
@@ -24,6 +25,8 @@
     selectedId?: string | null;
     /** Handler for conversation selection */
     onSelect?: (id: string) => void;
+    /** Handler for bookmark toggle */
+    onToggleBookmark?: (id: string) => void;
     /** Whether data is loading */
     isLoading?: boolean;
     /** Reference to the conversation list element (bindable) */
@@ -34,13 +37,21 @@
     conversations = [],
     selectedId = null,
     onSelect,
+    onToggleBookmark,
     isLoading = false,
     listRef = $bindable(),
   }: Props = $props();
 </script>
 
 <aside class="sidebar" aria-label="Conversation list">
-  <ConversationList {conversations} {selectedId} {onSelect} {isLoading} bind:listRef />
+  <ConversationList
+    {conversations}
+    {selectedId}
+    {onSelect}
+    {onToggleBookmark}
+    {isLoading}
+    bind:listRef
+  />
 </aside>
 
 <style>

@@ -11,6 +11,7 @@
   import SearchInput from "./SearchInput.svelte";
   import ProjectFilter from "./ProjectFilter.svelte";
   import DateRangePicker from "./DateRangePicker.svelte";
+  import BookmarkedFilter from "./BookmarkedFilter.svelte";
   import { searchStore, filtersStore, conversationsStore } from "$lib/stores";
 
   interface Props {
@@ -47,6 +48,15 @@
     conversationsStore.load(filtersStore.asConversationFilters);
     onFilterChange?.();
   }
+
+  /**
+   * Handle bookmarked filter changes.
+   */
+  function handleBookmarkedChange() {
+    // Reload conversations with new filter
+    conversationsStore.load(filtersStore.asConversationFilters);
+    onFilterChange?.();
+  }
 </script>
 
 <header class="header">
@@ -66,6 +76,7 @@
     <div class="filters">
       <ProjectFilter onChange={handleProjectChange} />
       <DateRangePicker onChange={handleDateChange} />
+      <BookmarkedFilter onChange={handleBookmarkedChange} />
     </div>
   </div>
 </header>

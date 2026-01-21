@@ -30,6 +30,7 @@
       preview: string;
       lastTime: string;
       messageCount: number;
+      bookmarked: boolean;
     }>
   >([]);
   let selectedConversationId = $state<string | null>(null);
@@ -48,6 +49,7 @@
         preview: `This is a preview message for conversation ${i}. It contains some sample text that demonstrates truncation when the content exceeds 100 characters.`,
         lastTime: new Date(Date.now() - i * 60 * 60 * 1000).toISOString(),
         messageCount: Math.floor(Math.random() * 50) + 1,
+        bookmarked: i % 10 === 0, // Every 10th conversation is bookmarked for testing
       }));
     }
   });
@@ -132,6 +134,10 @@
       };
     });
 
+    // Get bookmark status from conversations list
+    const conv = conversations.find((c) => c.id === id);
+    const bookmarked = conv?.bookmarked ?? false;
+
     return {
       id,
       projectPath: `/Users/dev/projects/project-${Math.floor(convIndex / 50)}`,
@@ -140,6 +146,7 @@
       lastTime: new Date(baseTime + (messageCount - 1) * 5 * 60 * 1000).toISOString(),
       messages,
       totalTokens: { input: 500, output: 2000 },
+      bookmarked,
     };
   }
 
@@ -170,6 +177,28 @@
   function handleBack() {
     selectedConversationId = null;
     selectedConversation = null;
+  }
+
+  /**
+   * Handle bookmark toggle for a conversation.
+   * Updates both the list and detail views.
+   */
+  function handleToggleBookmark(id: string) {
+    // Toggle bookmark in the conversations list
+    conversations = conversations.map((c) =>
+      c.id === id ? { ...c, bookmarked: !c.bookmarked } : c
+    );
+
+    // Update the selected conversation if it matches
+    if (selectedConversation && selectedConversation.id === id) {
+      selectedConversation = {
+        ...selectedConversation,
+        bookmarked: !selectedConversation.bookmarked,
+      };
+    }
+
+    // In production, this would also call the Tauri backend:
+    // conversationsStore.toggleBookmark(id);
   }
 
   // Reference to conversation list for keyboard focus
@@ -219,6 +248,7 @@
         {conversations}
         selectedId={selectedConversationId}
         onSelect={handleSelectConversation}
+        onToggleBookmark={handleToggleBookmark}
         isLoading={isLoadingList}
         bind:listRef={conversationListRef}
       />
@@ -227,7 +257,11 @@
     <ErrorBoundary title="Content error" description="Failed to load the conversation details.">
       <DetailPane hasSelection={selectedConversationId !== null} isLoading={isLoadingDetail}>
         {#if selectedConversation}
-          <ConversationDetail conversation={selectedConversation} onBack={handleBack} />
+          <ConversationDetail
+            conversation={selectedConversation}
+            onBack={handleBack}
+            onToggleBookmark={handleToggleBookmark}
+          />
         {/if}
       </DetailPane>
     </ErrorBoundary>

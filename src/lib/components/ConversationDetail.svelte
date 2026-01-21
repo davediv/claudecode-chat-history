@@ -16,9 +16,22 @@
     conversation: Conversation;
     /** Handler for back button (mobile/narrow view) */
     onBack?: () => void;
+    /** Handler for bookmark toggle */
+    onToggleBookmark?: (id: string) => void;
   }
 
-  let { conversation, onBack }: Props = $props();
+  let { conversation, onBack, onToggleBookmark }: Props = $props();
+
+  function handleBookmarkClick() {
+    onToggleBookmark?.(conversation.id);
+  }
+
+  function handleBookmarkKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onToggleBookmark?.(conversation.id);
+    }
+  }
 
   /**
    * Format a date as relative or absolute depending on recency.
@@ -89,6 +102,28 @@
         </span>
       </div>
     </div>
+
+    <button
+      class="bookmark-button"
+      class:bookmarked={conversation.bookmarked}
+      onclick={handleBookmarkClick}
+      onkeydown={handleBookmarkKeydown}
+      aria-label={conversation.bookmarked ? "Remove bookmark" : "Bookmark conversation"}
+      aria-pressed={conversation.bookmarked}
+      title={conversation.bookmarked ? "Remove bookmark" : "Bookmark conversation"}
+    >
+      <svg
+        class="bookmark-icon"
+        viewBox="0 0 24 24"
+        fill={conversation.bookmarked ? "currentColor" : "none"}
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path
+          d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+        ></path>
+      </svg>
+    </button>
   </header>
 
   <div class="messages-container">
@@ -181,10 +216,56 @@
     scroll-behavior: smooth;
   }
 
+  .bookmark-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .bookmark-button:hover {
+    color: var(--color-text-secondary);
+    background-color: var(--color-bg-tertiary);
+  }
+
+  .bookmark-button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  .bookmark-button.bookmarked {
+    color: var(--color-accent);
+  }
+
+  .bookmark-button.bookmarked:hover {
+    color: var(--color-accent);
+    background-color: var(--color-bg-tertiary);
+  }
+
+  .bookmark-icon {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
   /* Respect reduced motion preference */
   @media (prefers-reduced-motion: reduce) {
     .messages-container {
       scroll-behavior: auto;
+    }
+
+    .bookmark-button {
+      transition: none;
     }
   }
 </style>

@@ -78,10 +78,13 @@ pub fn get_conversations(
 
     db.with_connection(|conn| {
         // Build query with optional filters
+        // LEFT JOIN bookmarks to get bookmark status
         let mut sql = String::from(
             r#"
-            SELECT id, project_name, start_time, last_time, preview, message_count
-            FROM conversations
+            SELECT c.id, c.project_name, c.start_time, c.last_time, c.preview, c.message_count,
+                   CASE WHEN b.conversation_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked
+            FROM conversations c
+            LEFT JOIN bookmarks b ON c.id = b.conversation_id
             WHERE 1=1
             "#,
         );
@@ -90,24 +93,33 @@ pub fn get_conversations(
 
         // Add project filter
         if let Some(ref project) = filters.project {
-            sql.push_str(" AND project_name = ?");
+            sql.push_str(" AND c.project_name = ?");
             params_vec.push(Box::new(project.clone()));
         }
 
         // Add date_start filter
         if let Some(ref date_start) = filters.date_start {
-            sql.push_str(" AND last_time >= ?");
+            sql.push_str(" AND c.last_time >= ?");
             params_vec.push(Box::new(date_start.clone()));
         }
 
         // Add date_end filter
         if let Some(ref date_end) = filters.date_end {
-            sql.push_str(" AND last_time <= ?");
+            sql.push_str(" AND c.last_time <= ?");
             params_vec.push(Box::new(date_end.clone()));
         }
 
+        // Add bookmarked filter
+        if let Some(bookmarked) = filters.bookmarked {
+            if bookmarked {
+                sql.push_str(" AND b.conversation_id IS NOT NULL");
+            } else {
+                sql.push_str(" AND b.conversation_id IS NULL");
+            }
+        }
+
         // Add ordering and pagination
-        sql.push_str(" ORDER BY last_time DESC LIMIT ? OFFSET ?");
+        sql.push_str(" ORDER BY c.last_time DESC LIMIT ? OFFSET ?");
         params_vec.push(Box::new(pagination.limit));
         params_vec.push(Box::new(pagination.offset));
 
@@ -124,6 +136,7 @@ pub fn get_conversations(
                 last_time: row.get(3)?,
                 preview: row.get(4)?,
                 message_count: row.get(5)?,
+                bookmarked: row.get::<_, i32>(6)? != 0,
             })
         })?;
 
@@ -161,14 +174,16 @@ pub fn get_conversation(
 ) -> Result<Conversation, CommandError> {
     debug!("get_conversation: id={}", id);
 
-    // Look up conversation metadata from database
+    // Look up conversation metadata from database (including bookmark status)
     let metadata = db.with_connection(|conn| {
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, project_path, project_name, start_time, last_time, file_path,
-                   total_input_tokens, total_output_tokens
-            FROM conversations
-            WHERE id = ?1
+            SELECT c.id, c.project_path, c.project_name, c.start_time, c.last_time, c.file_path,
+                   c.total_input_tokens, c.total_output_tokens,
+                   CASE WHEN b.conversation_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked
+            FROM conversations c
+            LEFT JOIN bookmarks b ON c.id = b.conversation_id
+            WHERE c.id = ?1
             "#,
         )?;
 
@@ -182,6 +197,7 @@ pub fn get_conversation(
                 file_path: row.get(5)?,
                 total_input_tokens: row.get(6)?,
                 total_output_tokens: row.get(7)?,
+                bookmarked: row.get::<_, i32>(8)? != 0,
             })
         });
 
@@ -258,7 +274,7 @@ pub fn get_conversation(
             input: metadata.total_input_tokens,
             output: metadata.total_output_tokens,
         },
-        bookmarked: None,
+        bookmarked: Some(metadata.bookmarked),
         tags: None,
     })
 }
@@ -427,6 +443,53 @@ fn prepare_fts_query(query: &str) -> String {
     }
 }
 
+/// Toggles the bookmark status of a conversation.
+///
+/// # Arguments
+/// * `db` - Database state
+/// * `conversation_id` - ID of the conversation to toggle
+///
+/// # Returns
+/// * `bool` - The new bookmark status (true if now bookmarked, false if unbookmarked)
+#[tauri::command]
+pub fn toggle_bookmark(
+    db: State<'_, Arc<Database>>,
+    conversation_id: String,
+) -> Result<bool, CommandError> {
+    debug!("toggle_bookmark: conversation_id={}", conversation_id);
+
+    db.with_connection(|conn| {
+        // Check if bookmark exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM bookmarks WHERE conversation_id = ?1",
+                [&conversation_id],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if exists {
+            // Remove bookmark
+            conn.execute(
+                "DELETE FROM bookmarks WHERE conversation_id = ?1",
+                [&conversation_id],
+            )?;
+            info!("toggle_bookmark: unbookmarked {}", conversation_id);
+            Ok(false)
+        } else {
+            // Add bookmark
+            let now = chrono::Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO bookmarks (conversation_id, created_at) VALUES (?1, ?2)",
+                rusqlite::params![&conversation_id, &now],
+            )?;
+            info!("toggle_bookmark: bookmarked {}", conversation_id);
+            Ok(true)
+        }
+    })
+    .map_err(CommandError::from)
+}
+
 /// Internal struct for conversation metadata from DB.
 #[derive(Debug)]
 struct ConversationMetadata {
@@ -438,6 +501,7 @@ struct ConversationMetadata {
     file_path: String,
     total_input_tokens: i64,
     total_output_tokens: i64,
+    bookmarked: bool,
 }
 
 #[cfg(test)]

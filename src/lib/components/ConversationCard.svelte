@@ -19,10 +19,14 @@
     lastTime?: string;
     /** Number of messages in conversation */
     messageCount?: number;
+    /** Whether this conversation is bookmarked */
+    bookmarked?: boolean;
     /** Whether this card is currently selected */
     isSelected?: boolean;
     /** Handler for card selection */
     onSelect?: (id: string) => void;
+    /** Handler for bookmark toggle */
+    onToggleBookmark?: (id: string) => void;
   }
 
   let {
@@ -31,8 +35,10 @@
     preview = "No preview available",
     lastTime,
     messageCount = 0,
+    bookmarked = false,
     isSelected = false,
     onSelect,
+    onToggleBookmark,
   }: Props = $props();
 
   // Display values with fallbacks for missing data
@@ -95,6 +101,19 @@
       onSelect?.(id);
     }
   }
+
+  function handleBookmarkClick(event: MouseEvent) {
+    event.stopPropagation();
+    onToggleBookmark?.(id);
+  }
+
+  function handleBookmarkKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleBookmark?.(id);
+    }
+  }
 </script>
 
 <div
@@ -128,6 +147,27 @@
       </svg>
       {messageCount}
     </span>
+    <button
+      class="bookmark-button"
+      class:bookmarked
+      onclick={handleBookmarkClick}
+      onkeydown={handleBookmarkKeydown}
+      aria-label={bookmarked ? "Remove bookmark" : "Bookmark conversation"}
+      aria-pressed={bookmarked}
+      title={bookmarked ? "Remove bookmark" : "Bookmark conversation"}
+    >
+      <svg
+        class="bookmark-icon"
+        viewBox="0 0 24 24"
+        fill={bookmarked ? "currentColor" : "none"}
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path
+          d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+        ></path>
+      </svg>
+    </button>
   </div>
 </div>
 
@@ -217,5 +257,54 @@
   .message-icon {
     width: 0.75rem;
     height: 0.75rem;
+  }
+
+  .bookmark-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+  }
+
+  .bookmark-button:hover {
+    color: var(--color-text-secondary);
+    background-color: var(--color-bg-tertiary);
+  }
+
+  .bookmark-button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  .bookmark-button.bookmarked {
+    color: var(--color-accent);
+  }
+
+  .bookmark-button.bookmarked:hover {
+    color: var(--color-accent);
+    background-color: var(--color-bg-tertiary);
+  }
+
+  .bookmark-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+
+  /* Respect reduced motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    .bookmark-button {
+      transition: none;
+    }
   }
 </style>

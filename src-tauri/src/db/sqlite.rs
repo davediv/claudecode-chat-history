@@ -198,6 +198,21 @@ pub fn init_db(conn: &Connection) -> DbResult<()> {
         "#,
     )?;
 
+    // Create bookmarks table for user-marked conversations
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            conversation_id TEXT PRIMARY KEY NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        );
+
+        -- Index for efficient bookmark lookups
+        CREATE INDEX IF NOT EXISTS idx_bookmarks_conversation_id
+            ON bookmarks(conversation_id);
+        "#,
+    )?;
+
     info!("Database schema initialized successfully");
     Ok(())
 }

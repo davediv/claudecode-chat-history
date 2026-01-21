@@ -13,12 +13,13 @@ interface PersistedFilters {
   project: string | null;
   dateStart: string | null;
   dateEnd: string | null;
+  bookmarked: boolean | null;
 }
 
 // Load persisted filters from localStorage
 function loadPersistedFilters(): PersistedFilters {
   const stored = getStorageItem<PersistedFilters>(STORAGE_KEYS.FILTERS);
-  return stored ?? { project: null, dateStart: null, dateEnd: null };
+  return stored ?? { project: null, dateStart: null, dateEnd: null, bookmarked: null };
 }
 
 // Initialize with persisted values
@@ -28,6 +29,7 @@ const initialFilters = loadPersistedFilters();
 let projectFilter = $state<string | null>(initialFilters.project);
 let dateStart = $state<string | null>(initialFilters.dateStart);
 let dateEnd = $state<string | null>(initialFilters.dateEnd);
+let bookmarkedFilter = $state<boolean | null>(initialFilters.bookmarked);
 let searchQuery = $state("");
 
 /**
@@ -38,6 +40,7 @@ function persistFilters(): void {
     project: projectFilter,
     dateStart: dateStart,
     dateEnd: dateEnd,
+    bookmarked: bookmarkedFilter,
   });
 }
 
@@ -67,12 +70,21 @@ export function setSearch(query: string): void {
 }
 
 /**
+ * Set the bookmarked filter.
+ */
+export function setBookmarked(bookmarked: boolean | null): void {
+  bookmarkedFilter = bookmarked;
+  persistFilters();
+}
+
+/**
  * Clear all filters.
  */
 export function clearAll(): void {
   projectFilter = null;
   dateStart = null;
   dateEnd = null;
+  bookmarkedFilter = null;
   searchQuery = "";
   persistFilters();
 }
@@ -81,7 +93,7 @@ export function clearAll(): void {
  * Check if any filters are active.
  */
 function hasActiveFilters(): boolean {
-  return !!(projectFilter || dateStart || dateEnd || searchQuery);
+  return !!(projectFilter || dateStart || dateEnd || bookmarkedFilter !== null || searchQuery);
 }
 
 /**
@@ -92,6 +104,7 @@ function toConversationFilters() {
     project: projectFilter ?? undefined,
     dateStart: dateStart ?? undefined,
     dateEnd: dateEnd ?? undefined,
+    bookmarked: bookmarkedFilter ?? undefined,
   };
 }
 
@@ -106,6 +119,9 @@ export const filtersStore = {
   get dateEnd() {
     return dateEnd;
   },
+  get bookmarkedFilter() {
+    return bookmarkedFilter;
+  },
   get searchQuery() {
     return searchQuery;
   },
@@ -119,5 +135,6 @@ export const filtersStore = {
   setProject,
   setDateRange,
   setSearch,
+  setBookmarked,
   clearAll,
 };

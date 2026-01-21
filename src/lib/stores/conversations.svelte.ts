@@ -304,6 +304,50 @@ export function setLoading(isLoading: boolean): void {
   loading = isLoading;
 }
 
+/**
+ * Toggle bookmark status for a conversation.
+ * Updates both the conversations list and selected conversation if applicable.
+ */
+export async function toggleBookmark(conversationId: string): Promise<boolean> {
+  // Try to use Tauri IPC if available
+  if (typeof window !== "undefined" && "__TAURI__" in window) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const newStatus = await invoke<boolean>("toggle_bookmark", { conversationId });
+
+    // Update the conversation in the list
+    conversations = conversations.map((c) =>
+      c.id === conversationId ? { ...c, bookmarked: newStatus } : c
+    );
+
+    // Update cache if this conversation is cached
+    const cached = conversationCache.get(conversationId);
+    if (cached) {
+      conversationCache.set(conversationId, { ...cached, bookmarked: newStatus });
+    }
+
+    // Update selected conversation if it's the one being toggled
+    if (selectedConversation && selectedConversation.id === conversationId) {
+      selectedConversation = { ...selectedConversation, bookmarked: newStatus };
+    }
+
+    return newStatus;
+  } else {
+    // Development mode: toggle locally
+    const conv = conversations.find((c) => c.id === conversationId);
+    const newStatus = conv ? !conv.bookmarked : true;
+
+    conversations = conversations.map((c) =>
+      c.id === conversationId ? { ...c, bookmarked: newStatus } : c
+    );
+
+    if (selectedConversation && selectedConversation.id === conversationId) {
+      selectedConversation = { ...selectedConversation, bookmarked: newStatus };
+    }
+
+    return newStatus;
+  }
+}
+
 // Export reactive getters
 export const conversationsStore = {
   get conversations() {
@@ -343,4 +387,5 @@ export const conversationsStore = {
   setSelectedConversation,
   setLoading,
   clearCache,
+  toggleBookmark,
 };

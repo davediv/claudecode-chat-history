@@ -18,6 +18,7 @@
     preview: string;
     lastTime: string;
     messageCount: number;
+    bookmarked: boolean;
   }
 
   interface Props {
@@ -27,6 +28,8 @@
     selectedId?: string | null;
     /** Handler for conversation selection */
     onSelect?: (id: string) => void;
+    /** Handler for bookmark toggle */
+    onToggleBookmark?: (id: string) => void;
     /** Whether data is loading */
     isLoading?: boolean;
     /** Reference to the list element (bindable) */
@@ -37,6 +40,7 @@
     conversations,
     selectedId = null,
     onSelect,
+    onToggleBookmark,
     isLoading = false,
     listRef = $bindable(),
   }: Props = $props();
@@ -177,8 +181,10 @@
           preview={item.preview}
           lastTime={item.lastTime}
           messageCount={item.messageCount}
+          bookmarked={item.bookmarked}
           isSelected={selectedId === item.id || focusedIndex === index}
           onSelect={handleSelect}
+          {onToggleBookmark}
         />
       {/snippet}
     </SvelteVirtualList>
