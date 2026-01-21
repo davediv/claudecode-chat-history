@@ -11,6 +11,7 @@ import type {
   ConversationFilters,
   ProjectInfo,
   SearchResult,
+  ConversationsUpdatedEvent,
 } from "$lib/types";
 
 /**
@@ -184,6 +185,48 @@ export async function searchConversations(
 }
 
 /**
+ * Unlisten function type from Tauri events API.
+ */
+export type UnlistenFn = () => void;
+
+/**
+ * Event name for conversations updated events from backend.
+ */
+export const CONVERSATIONS_UPDATED_EVENT = "conversations-updated";
+
+/**
+ * Listen for conversations-updated events from the backend file watcher.
+ * Returns an unlisten function to clean up the listener.
+ *
+ * @param callback - Function to call when conversations are updated
+ * @returns Promise resolving to unlisten function, or null if not in Tauri
+ */
+export async function listenToConversationsUpdated(
+  callback: (event: ConversationsUpdatedEvent) => void
+): Promise<UnlistenFn | null> {
+  if (!isTauriAvailable()) {
+    console.log("[tauri service] Not in Tauri environment, skipping event listener");
+    return null;
+  }
+
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<ConversationsUpdatedEvent>(
+      CONVERSATIONS_UPDATED_EVENT,
+      (event) => {
+        console.log("[tauri service] Received conversations-updated event:", event.payload);
+        callback(event.payload);
+      }
+    );
+    console.log("[tauri service] Listening for conversations-updated events");
+    return unlisten;
+  } catch (error) {
+    console.error("[tauri service] Failed to listen for conversations-updated:", error);
+    return null;
+  }
+}
+
+/**
  * Tauri service object for convenience import.
  */
 export const tauriService = {
@@ -192,4 +235,5 @@ export const tauriService = {
   getConversation,
   getProjects,
   searchConversations,
+  listenToConversationsUpdated,
 };

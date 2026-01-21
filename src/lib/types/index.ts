@@ -111,3 +111,16 @@ export interface ProjectInfo {
   /** Timestamp of most recent activity */
   lastActivity: string; // ISO 8601 format
 }
+
+/**
+ * Payload for the conversations-updated Tauri event.
+ * Emitted by the file watcher when conversations change.
+ */
+export interface ConversationsUpdatedEvent {
+  /** Number of new conversations added */
+  newCount: number;
+  /** Number of existing conversations updated */
+  updatedCount: number;
+  /** Whether this was triggered by file watcher (vs initial load) */
+  fromWatcher: boolean;
+}

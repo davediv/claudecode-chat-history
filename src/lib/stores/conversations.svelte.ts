@@ -229,6 +229,55 @@ export function clearFilters(): void {
   load();
 }
 
+// Track if a reload is in progress to prevent concurrent reloads
+let reloadInProgress = false;
+
+/**
+ * Reload conversations in response to file watcher updates.
+ * Preserves current selection and scroll position.
+ * Optionally invalidates cache for updated conversations.
+ * Prevents concurrent reloads via locking.
+ */
+export async function reload(): Promise<void> {
+  // Prevent concurrent reloads
+  if (reloadInProgress) {
+    console.log("[conversations store] Reload already in progress, skipping");
+    return;
+  }
+
+  reloadInProgress = true;
+
+  try {
+    // Store current selection to preserve it
+    const currentSelectedId = selectedId;
+
+    // Reload the conversation list
+    await load();
+
+    // If we had a selection, try to restore it
+    if (currentSelectedId) {
+      // Check if the conversation still exists
+      const stillExists = conversations.some((c) => c.id === currentSelectedId);
+      if (stillExists) {
+        // Invalidate cache for this conversation so we get fresh data
+        conversationCache.delete(currentSelectedId);
+        const accessIndex = cacheAccessOrder.indexOf(currentSelectedId);
+        if (accessIndex > -1) {
+          cacheAccessOrder.splice(accessIndex, 1);
+        }
+        // Re-select to reload fresh data
+        selectedId = null; // Reset to force re-fetch
+        await select(currentSelectedId);
+      } else {
+        // Conversation was deleted, clear selection
+        clearSelection();
+      }
+    }
+  } finally {
+    reloadInProgress = false;
+  }
+}
+
 /**
  * Set conversations directly (for mock data in development).
  */
@@ -283,6 +332,7 @@ export const conversationsStore = {
   },
   // Actions
   load,
+  reload,
   select,
   clearSelection,
   restoreSelection,
