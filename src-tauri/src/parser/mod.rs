@@ -6,4 +6,7 @@
 
 pub mod jsonl;
 
-pub use jsonl::{discover_jsonl_files, get_claude_projects_dir, ParserError, ParserResult};
+pub use jsonl::{
+    discover_jsonl_files, get_claude_projects_dir, parse_jsonl_line, ParserError, ParserResult,
+    RawContent, RawContentBlock, RawInnerMessage, RawMessage, RawMessageType, RawTokenCount,
+};
