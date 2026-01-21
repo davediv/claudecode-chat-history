@@ -12,6 +12,8 @@
   import type { Conversation, TagInfo } from "$lib/types";
   import MessageBubble from "./MessageBubble.svelte";
   import TagInput from "./TagInput.svelte";
+  import { exportConversation } from "$lib/services/export";
+  import { toast } from "$lib/stores/toast.svelte";
 
   interface Props {
     /** The conversation to display */
@@ -40,6 +42,32 @@
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onToggleBookmark?.(conversation.id);
+    }
+  }
+
+  let isExporting = $state(false);
+
+  async function handleExport() {
+    if (isExporting) return;
+    isExporting = true;
+    try {
+      const success = await exportConversation(conversation);
+      if (success) {
+        toast.success("Conversation exported successfully");
+      }
+      // User cancellation (success === false) doesn't need a toast
+    } catch (error) {
+      console.error("Export failed:", error);
+      toast.error("Failed to export conversation");
+    } finally {
+      isExporting = false;
+    }
+  }
+
+  function handleExportKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleExport();
     }
   }
 
@@ -114,7 +142,40 @@
     </div>
 
     <button
-      class="bookmark-button"
+      class="action-button export-button"
+      onclick={handleExport}
+      onkeydown={handleExportKeydown}
+      disabled={isExporting}
+      aria-label="Export conversation as Markdown"
+      title="Export as Markdown"
+    >
+      {#if isExporting}
+        <svg
+          class="action-icon spin"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+        </svg>
+      {:else}
+        <svg
+          class="action-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+      {/if}
+    </button>
+
+    <button
+      class="action-button bookmark-button"
       class:bookmarked={conversation.bookmarked}
       onclick={handleBookmarkClick}
       onkeydown={handleBookmarkKeydown}
@@ -237,7 +298,8 @@
     scroll-behavior: smooth;
   }
 
-  .bookmark-button {
+  /* Shared action button styles */
+  .action-button {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -255,16 +317,41 @@
     flex-shrink: 0;
   }
 
-  .bookmark-button:hover {
+  .action-button:hover {
     color: var(--color-text-secondary);
     background-color: var(--color-bg-tertiary);
   }
 
-  .bookmark-button:focus-visible {
+  .action-button:focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 1px;
   }
 
+  .action-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .action-icon {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
+  /* Export button spinner */
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .action-icon.spin {
+    animation: spin 1s linear infinite;
+  }
+
+  /* Bookmark button active state */
   .bookmark-button.bookmarked {
     color: var(--color-accent);
   }
@@ -285,8 +372,12 @@
       scroll-behavior: auto;
     }
 
-    .bookmark-button {
+    .action-button {
       transition: none;
+    }
+
+    .action-icon.spin {
+      animation: none;
     }
   }
 </style>

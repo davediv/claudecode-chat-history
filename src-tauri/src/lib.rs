@@ -43,6 +43,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(db)
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![greet, get_conversations, get_conversation, get_projects, search_conversations, toggle_bookmark, set_tags, get_all_tags])

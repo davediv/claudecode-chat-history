@@ -16,6 +16,12 @@
       "identifier": "fs:allow-read-dir",
       "allow": [{ "path": "$HOME/.claude/projects" }, { "path": "$HOME/.claude/projects/**" }]
     },
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "dialog:default",
+    "dialog:allow-save",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "**" }]
+    }
   ]
 }
