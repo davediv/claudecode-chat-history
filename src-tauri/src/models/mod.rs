@@ -126,6 +126,9 @@ pub struct ConversationFilters {
     /// Filter by bookmark status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bookmarked: Option<bool>,
+    /// Filter by tags (conversation must have ALL specified tags).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 /// A search result with matching conversation info.
@@ -198,14 +201,17 @@ mod tests {
             last_time: "2025-01-01T01:00:00Z".to_string(),
             preview: "How do I...".to_string(),
             message_count: 10,
+            bookmarked: true,
         };
 
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("\"projectName\":\"my-project\""));
         assert!(json.contains("\"messageCount\":10"));
+        assert!(json.contains("\"bookmarked\":true"));
 
         let deserialized: ConversationSummary = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "abc123");
+        assert!(deserialized.bookmarked);
     }
 
     #[test]

@@ -12,6 +12,7 @@ import type {
   ProjectInfo,
   SearchResult,
   ConversationsUpdatedEvent,
+  TagInfo,
 } from "$lib/types";
 
 /**
@@ -249,6 +250,52 @@ export async function toggleBookmark(conversationId: string): Promise<boolean> {
 }
 
 /**
+ * Set tags for a conversation.
+ * Replaces all existing tags with the provided list.
+ *
+ * @param conversationId - ID of the conversation
+ * @param tags - Array of tag strings (will be normalized: lowercase, trimmed, deduplicated)
+ * @returns The normalized, sorted array of tags that were set
+ * @throws TauriError if operation fails
+ */
+export async function setTags(conversationId: string, tags: string[]): Promise<string[]> {
+  const invoke = await getInvoke();
+
+  if (!invoke) {
+    throw new TauriError("Not in Tauri environment", "NOT_AVAILABLE");
+  }
+
+  try {
+    const result = await invoke<string[]>("set_tags", { conversationId, tags });
+    return result;
+  } catch (error) {
+    throw wrapError(error, "setTags");
+  }
+}
+
+/**
+ * Get all unique tags across all conversations with usage counts.
+ *
+ * @returns Array of tag info sorted alphabetically by tag name
+ * @throws TauriError if operation fails
+ */
+export async function getAllTags(): Promise<TagInfo[]> {
+  const invoke = await getInvoke();
+
+  if (!invoke) {
+    console.log("[tauri service] Not in Tauri environment, returning empty array");
+    return [];
+  }
+
+  try {
+    const result = await invoke<TagInfo[]>("get_all_tags");
+    return result;
+  } catch (error) {
+    throw wrapError(error, "getAllTags");
+  }
+}
+
+/**
  * Tauri service object for convenience import.
  */
 export const tauriService = {
@@ -258,5 +305,7 @@ export const tauriService = {
   getProjects,
   searchConversations,
   toggleBookmark,
+  setTags,
+  getAllTags,
   listenToConversationsUpdated,
 };

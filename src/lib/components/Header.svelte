@@ -6,13 +6,15 @@
    * - Search input with debouncing
    * - Project filter dropdown
    * - Date range filter
+   * - Tag filter dropdown
    * - Filter integration with stores
    */
   import SearchInput from "./SearchInput.svelte";
   import ProjectFilter from "./ProjectFilter.svelte";
   import DateRangePicker from "./DateRangePicker.svelte";
   import BookmarkedFilter from "./BookmarkedFilter.svelte";
-  import { searchStore, filtersStore, conversationsStore } from "$lib/stores";
+  import TagFilter from "./TagFilter.svelte";
+  import { searchStore, filtersStore, conversationsStore, tagsStore } from "$lib/stores";
 
   interface Props {
     /** Handler for search changes */
@@ -57,6 +59,16 @@
     conversationsStore.load(filtersStore.asConversationFilters);
     onFilterChange?.();
   }
+
+  /**
+   * Handle tag filter changes.
+   */
+  function handleTagsChange(tags: string[]) {
+    filtersStore.setTags(tags);
+    // Reload conversations with new filter
+    conversationsStore.load(filtersStore.asConversationFilters);
+    onFilterChange?.();
+  }
 </script>
 
 <header class="header">
@@ -77,6 +89,11 @@
       <ProjectFilter onChange={handleProjectChange} />
       <DateRangePicker onChange={handleDateChange} />
       <BookmarkedFilter onChange={handleBookmarkedChange} />
+      <TagFilter
+        allTags={tagsStore.allTags}
+        selectedTags={filtersStore.tagsFilter}
+        onTagsChange={handleTagsChange}
+      />
     </div>
   </div>
 </header>

@@ -20,6 +20,8 @@
   import ConversationDetail from "$lib/components/ConversationDetail.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
   import { ErrorBoundary, FilterPills } from "$lib/components";
+  import { tagsStore } from "$lib/stores";
+  import { setTags as setTagsService } from "$lib/services/tauri";
   import type { Conversation, Message, ContentBlock } from "$lib/types";
 
   // Conversation list state
@@ -201,6 +203,40 @@
     // conversationsStore.toggleBookmark(id);
   }
 
+  /**
+   * Handle tag changes for a conversation.
+   */
+  async function handleTagsChange(id: string, tags: string[]) {
+    if (import.meta.env.DEV) {
+      // Mock implementation for development - just update local state
+      if (selectedConversation && selectedConversation.id === id) {
+        selectedConversation = {
+          ...selectedConversation,
+          tags: tags,
+        };
+      }
+      return;
+    }
+
+    // Production: call Tauri backend
+    try {
+      const normalizedTags = await setTagsService(id, tags);
+
+      // Update selected conversation with normalized tags
+      if (selectedConversation && selectedConversation.id === id) {
+        selectedConversation = {
+          ...selectedConversation,
+          tags: normalizedTags,
+        };
+      }
+
+      // Refresh the tags list to update autocomplete
+      await tagsStore.refresh();
+    } catch (error) {
+      console.error("Failed to update tags:", error);
+    }
+  }
+
   // Reference to conversation list for keyboard focus
   let conversationListRef: HTMLElement | undefined = $state();
 
@@ -231,6 +267,11 @@
 
   onMount(() => {
     window.addEventListener("keydown", handleGlobalKeydown);
+
+    // Load tags for autocomplete (production only)
+    if (!import.meta.env.DEV) {
+      tagsStore.load();
+    }
   });
 
   onDestroy(() => {
@@ -261,6 +302,8 @@
             conversation={selectedConversation}
             onBack={handleBack}
             onToggleBookmark={handleToggleBookmark}
+            onTagsChange={handleTagsChange}
+            allTags={tagsStore.allTags}
           />
         {/if}
       </DetailPane>

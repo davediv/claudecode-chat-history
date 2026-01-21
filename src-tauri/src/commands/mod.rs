@@ -118,6 +118,18 @@ pub fn get_conversations(
             }
         }
 
+        // Add tags filter (must have ALL specified tags)
+        if let Some(ref tags) = filters.tags {
+            if !tags.is_empty() {
+                for tag in tags {
+                    sql.push_str(
+                        " AND EXISTS (SELECT 1 FROM conversation_tags ct WHERE ct.conversation_id = c.id AND ct.tag = ?)"
+                    );
+                    params_vec.push(Box::new(tag.clone()));
+                }
+            }
+        }
+
         // Add ordering and pagination
         sql.push_str(" ORDER BY c.last_time DESC LIMIT ? OFFSET ?");
         params_vec.push(Box::new(pagination.limit));
@@ -263,6 +275,19 @@ pub fn get_conversation(
         id
     );
 
+    // Fetch tags for this conversation
+    let tags = db.with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT tag FROM conversation_tags WHERE conversation_id = ?1 ORDER BY tag ASC"
+        )?;
+        let rows = stmt.query_map([&id], |row| row.get::<_, String>(0))?;
+        let mut tags_vec = Vec::new();
+        for row_result in rows {
+            tags_vec.push(row_result?);
+        }
+        Ok(tags_vec)
+    })?;
+
     Ok(Conversation {
         id: metadata.id,
         project_path: metadata.project_path,
@@ -275,7 +300,7 @@ pub fn get_conversation(
             output: metadata.total_output_tokens,
         },
         bookmarked: Some(metadata.bookmarked),
-        tags: None,
+        tags: if tags.is_empty() { None } else { Some(tags) },
     })
 }
 
@@ -504,6 +529,93 @@ struct ConversationMetadata {
     bookmarked: bool,
 }
 
+/// Sets the tags for a conversation (replaces all existing tags).
+///
+/// # Arguments
+/// * `db` - Database state
+/// * `conversation_id` - ID of the conversation
+/// * `tags` - New tags to set (empty array removes all tags)
+///
+/// # Returns
+/// * `Vec<String>` - The new set of tags
+#[tauri::command]
+pub fn set_tags(
+    db: State<'_, Arc<Database>>,
+    conversation_id: String,
+    tags: Vec<String>,
+) -> Result<Vec<String>, CommandError> {
+    debug!("set_tags: conversation_id={}, tags={:?}", conversation_id, tags);
+
+    db.with_connection(|conn| {
+        // Delete all existing tags for this conversation
+        conn.execute(
+            "DELETE FROM conversation_tags WHERE conversation_id = ?1",
+            [&conversation_id],
+        )?;
+
+        // Insert new tags (skip empty strings, normalize to lowercase)
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut inserted_tags = Vec::new();
+
+        for tag in tags {
+            let normalized = tag.trim().to_lowercase();
+            if !normalized.is_empty() && !inserted_tags.contains(&normalized) {
+                conn.execute(
+                    "INSERT INTO conversation_tags (conversation_id, tag, created_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![&conversation_id, &normalized, &now],
+                )?;
+                inserted_tags.push(normalized);
+            }
+        }
+
+        inserted_tags.sort();
+        info!("set_tags: set {} tags for {}", inserted_tags.len(), conversation_id);
+        Ok(inserted_tags)
+    })
+    .map_err(CommandError::from)
+}
+
+/// Gets all unique tags across all conversations.
+///
+/// # Arguments
+/// * `db` - Database state
+///
+/// # Returns
+/// * `Vec<TagInfo>` - List of tags with usage counts, sorted alphabetically
+#[tauri::command]
+pub fn get_all_tags(db: State<'_, Arc<Database>>) -> Result<Vec<TagInfo>, CommandError> {
+    debug!("get_all_tags");
+
+    db.with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT tag, COUNT(*) as count FROM conversation_tags GROUP BY tag ORDER BY tag ASC"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(TagInfo {
+                tag: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row_result in rows {
+            results.push(row_result?);
+        }
+
+        info!("get_all_tags: returned {} unique tags", results.len());
+        Ok(results)
+    })
+    .map_err(CommandError::from)
+}
+
+/// Tag information with usage count.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TagInfo {
+    pub tag: String,
+    pub count: i32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,6 +656,7 @@ mod tests {
                     last_time: row.get(3)?,
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
+                    bookmarked: false,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -578,6 +691,7 @@ mod tests {
                     last_time: row.get(3)?,
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
+                    bookmarked: false,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -616,6 +730,7 @@ mod tests {
                     last_time: row.get(3)?,
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
+                    bookmarked: false,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -651,6 +766,7 @@ mod tests {
                     last_time: row.get(3)?,
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
+                    bookmarked: false,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -691,6 +807,7 @@ mod tests {
                     last_time: row.get(3)?,
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
+                    bookmarked: false,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -767,6 +884,7 @@ mod tests {
                     file_path: row.get(5)?,
                     total_input_tokens: row.get(6)?,
                     total_output_tokens: row.get(7)?,
+                    bookmarked: false,
                 })
             });
 
@@ -796,6 +914,7 @@ mod tests {
             file_path: "/path/to/file.jsonl".to_string(),
             total_input_tokens: 100,
             total_output_tokens: 200,
+            bookmarked: false,
         };
 
         assert_eq!(metadata.id, "test-123");

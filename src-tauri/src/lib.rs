@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 // Re-export command handlers
-pub use commands::{get_conversation, get_conversations, get_projects, search_conversations, toggle_bookmark};
+pub use commands::{get_all_tags, get_conversation, get_conversations, get_projects, search_conversations, set_tags, toggle_bookmark};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -45,7 +45,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(db)
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![greet, get_conversations, get_conversation, get_projects, search_conversations, toggle_bookmark])
+        .invoke_handler(tauri::generate_handler![greet, get_conversations, get_conversation, get_projects, search_conversations, toggle_bookmark, set_tags, get_all_tags])
         .setup(move |app| {
             // Start file watcher after app is ready
             let app_handle = app.handle().clone();

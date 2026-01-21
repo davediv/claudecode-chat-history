@@ -7,9 +7,11 @@
    * - Messages in chronological order with role distinction
    * - Smooth scrolling for long conversations
    * - Back button for narrow screens
+   * - Tag management with autocomplete
    */
-  import type { Conversation } from "$lib/types";
+  import type { Conversation, TagInfo } from "$lib/types";
   import MessageBubble from "./MessageBubble.svelte";
+  import TagInput from "./TagInput.svelte";
 
   interface Props {
     /** The conversation to display */
@@ -18,9 +20,17 @@
     onBack?: () => void;
     /** Handler for bookmark toggle */
     onToggleBookmark?: (id: string) => void;
+    /** Handler for tags change */
+    onTagsChange?: (id: string, tags: string[]) => void;
+    /** All available tags for autocomplete */
+    allTags?: TagInfo[];
   }
 
-  let { conversation, onBack, onToggleBookmark }: Props = $props();
+  let { conversation, onBack, onToggleBookmark, onTagsChange, allTags = [] }: Props = $props();
+
+  function handleTagsChange(tags: string[]) {
+    onTagsChange?.(conversation.id, tags);
+  }
 
   function handleBookmarkClick() {
     onToggleBookmark?.(conversation.id);
@@ -126,6 +136,10 @@
     </button>
   </header>
 
+  <div class="tags-section">
+    <TagInput tags={conversation.tags ?? []} {allTags} onTagsChange={handleTagsChange} />
+  </div>
+
   <div class="messages-container">
     {#each conversation.messages as message (message.id)}
       <MessageBubble {message} />
@@ -207,6 +221,13 @@
 
   .meta-separator {
     opacity: 0.5;
+  }
+
+  .tags-section {
+    padding: 0.5rem 1rem;
+    background-color: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
   }
 
   .messages-container {

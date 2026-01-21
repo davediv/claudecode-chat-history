@@ -88,9 +88,10 @@ impl AppState {
         let conversations = self.db.with_connection(|conn| {
             let mut stmt = conn.prepare(
                 r#"
-                SELECT id, project_name, start_time, last_time, preview, message_count
-                FROM conversations
-                ORDER BY last_time DESC
+                SELECT c.id, c.project_name, c.start_time, c.last_time, c.preview, c.message_count,
+                       (SELECT 1 FROM bookmarks b WHERE b.conversation_id = c.id) IS NOT NULL as bookmarked
+                FROM conversations c
+                ORDER BY c.last_time DESC
                 "#,
             )?;
 
@@ -102,6 +103,7 @@ impl AppState {
                     last_time: row.get(3)?,
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
+                    bookmarked: row.get::<_, i32>(6)? != 0,
                 })
             })?;
 
@@ -172,6 +174,7 @@ mod tests {
                 last_time: "2025-01-01T01:00:00Z".to_string(),
                 preview: "Hello world".to_string(),
                 message_count: 5,
+                bookmarked: false,
             },
             ConversationSummary {
                 id: "conv2".to_string(),
@@ -180,6 +183,7 @@ mod tests {
                 last_time: "2025-01-02T01:00:00Z".to_string(),
                 preview: "Another conversation".to_string(),
                 message_count: 10,
+                bookmarked: true,
             },
         ];
 
@@ -205,6 +209,7 @@ mod tests {
             last_time: "2025-01-01T01:00:00Z".to_string(),
             preview: "Test".to_string(),
             message_count: 1,
+            bookmarked: false,
         }];
 
         state.set_cached_conversations(conversations);

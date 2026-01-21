@@ -86,6 +86,18 @@ export interface ConversationFilters {
   dateEnd?: string; // ISO 8601 format
   /** Filter by bookmark status */
   bookmarked?: boolean;
+  /** Filter by tags (must have ALL specified tags) */
+  tags?: string[];
+}
+
+/**
+ * Tag information with usage count.
+ */
+export interface TagInfo {
+  /** Tag name (normalized: lowercase, trimmed) */
+  tag: string;
+  /** Number of conversations with this tag */
+  count: number;
 }
 
 /**

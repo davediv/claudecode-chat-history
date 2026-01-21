@@ -14,12 +14,13 @@ interface PersistedFilters {
   dateStart: string | null;
   dateEnd: string | null;
   bookmarked: boolean | null;
+  tags: string[];
 }
 
 // Load persisted filters from localStorage
 function loadPersistedFilters(): PersistedFilters {
   const stored = getStorageItem<PersistedFilters>(STORAGE_KEYS.FILTERS);
-  return stored ?? { project: null, dateStart: null, dateEnd: null, bookmarked: null };
+  return stored ?? { project: null, dateStart: null, dateEnd: null, bookmarked: null, tags: [] };
 }
 
 // Initialize with persisted values
@@ -30,6 +31,7 @@ let projectFilter = $state<string | null>(initialFilters.project);
 let dateStart = $state<string | null>(initialFilters.dateStart);
 let dateEnd = $state<string | null>(initialFilters.dateEnd);
 let bookmarkedFilter = $state<boolean | null>(initialFilters.bookmarked);
+let tagsFilter = $state<string[]>(initialFilters.tags ?? []);
 let searchQuery = $state("");
 
 /**
@@ -41,6 +43,7 @@ function persistFilters(): void {
     dateStart: dateStart,
     dateEnd: dateEnd,
     bookmarked: bookmarkedFilter,
+    tags: tagsFilter,
   });
 }
 
@@ -78,6 +81,33 @@ export function setBookmarked(bookmarked: boolean | null): void {
 }
 
 /**
+ * Set the tags filter.
+ */
+export function setTags(tags: string[]): void {
+  tagsFilter = tags;
+  persistFilters();
+}
+
+/**
+ * Add a tag to the filter.
+ */
+export function addTag(tag: string): void {
+  const normalized = tag.trim().toLowerCase();
+  if (normalized && !tagsFilter.includes(normalized)) {
+    tagsFilter = [...tagsFilter, normalized];
+    persistFilters();
+  }
+}
+
+/**
+ * Remove a tag from the filter.
+ */
+export function removeTag(tag: string): void {
+  tagsFilter = tagsFilter.filter((t) => t !== tag);
+  persistFilters();
+}
+
+/**
  * Clear all filters.
  */
 export function clearAll(): void {
@@ -85,6 +115,7 @@ export function clearAll(): void {
   dateStart = null;
   dateEnd = null;
   bookmarkedFilter = null;
+  tagsFilter = [];
   searchQuery = "";
   persistFilters();
 }
@@ -93,7 +124,14 @@ export function clearAll(): void {
  * Check if any filters are active.
  */
 function hasActiveFilters(): boolean {
-  return !!(projectFilter || dateStart || dateEnd || bookmarkedFilter !== null || searchQuery);
+  return !!(
+    projectFilter ||
+    dateStart ||
+    dateEnd ||
+    bookmarkedFilter !== null ||
+    tagsFilter.length > 0 ||
+    searchQuery
+  );
 }
 
 /**
@@ -105,6 +143,7 @@ function toConversationFilters() {
     dateStart: dateStart ?? undefined,
     dateEnd: dateEnd ?? undefined,
     bookmarked: bookmarkedFilter ?? undefined,
+    tags: tagsFilter.length > 0 ? tagsFilter : undefined,
   };
 }
 
@@ -122,6 +161,9 @@ export const filtersStore = {
   get bookmarkedFilter() {
     return bookmarkedFilter;
   },
+  get tagsFilter() {
+    return tagsFilter;
+  },
   get searchQuery() {
     return searchQuery;
   },
@@ -136,5 +178,8 @@ export const filtersStore = {
   setDateRange,
   setSearch,
   setBookmarked,
+  setTags,
+  addTag,
+  removeTag,
   clearAll,
 };

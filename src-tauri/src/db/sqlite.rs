@@ -213,6 +213,25 @@ pub fn init_db(conn: &Connection) -> DbResult<()> {
         "#,
     )?;
 
+    // Create conversation_tags table for user-defined tags
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS conversation_tags (
+            conversation_id TEXT NOT NULL,
+            tag TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (conversation_id, tag),
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        );
+
+        -- Index for efficient tag lookups
+        CREATE INDEX IF NOT EXISTS idx_conversation_tags_conversation_id
+            ON conversation_tags(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_conversation_tags_tag
+            ON conversation_tags(tag);
+        "#,
+    )?;
+
     info!("Database schema initialized successfully");
     Ok(())
 }
