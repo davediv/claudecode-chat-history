@@ -1,4 +1,5 @@
 // Svelte components
+export { default as AnalyticsModal } from "./AnalyticsModal.svelte";
 export { default as DateRangePicker } from "./DateRangePicker.svelte";
 export { default as ErrorBoundary } from "./ErrorBoundary.svelte";
 export { default as FilterDropdown } from "./FilterDropdown.svelte";

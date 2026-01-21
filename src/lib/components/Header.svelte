@@ -14,7 +14,7 @@
   import DateRangePicker from "./DateRangePicker.svelte";
   import BookmarkedFilter from "./BookmarkedFilter.svelte";
   import TagFilter from "./TagFilter.svelte";
-  import { searchStore, filtersStore, conversationsStore, tagsStore } from "$lib/stores";
+  import { searchStore, filtersStore, conversationsStore, tagsStore, uiStore } from "$lib/stores";
 
   interface Props {
     /** Handler for search changes */
@@ -69,6 +69,13 @@
     conversationsStore.load(filtersStore.asConversationFilters);
     onFilterChange?.();
   }
+
+  /**
+   * Open the analytics modal.
+   */
+  function handleOpenAnalytics() {
+    uiStore.openAnalyticsModal();
+  }
 </script>
 
 <header class="header">
@@ -94,6 +101,25 @@
         selectedTags={filtersStore.tagsFilter}
         onTagsChange={handleTagsChange}
       />
+      <button
+        type="button"
+        class="analytics-button"
+        onclick={handleOpenAnalytics}
+        aria-label="View usage analytics"
+        title="Usage Analytics"
+      >
+        <svg
+          class="analytics-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M18 20V10"></path>
+          <path d="M12 20V4"></path>
+          <path d="M6 20v-6"></path>
+        </svg>
+      </button>
     </div>
   </div>
 </header>
@@ -137,6 +163,37 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+
+  .analytics-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .analytics-button:hover {
+    background: var(--color-bg-tertiary);
+  }
+
+  .analytics-button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  .analytics-icon {
+    width: 1rem;
+    height: 1rem;
   }
 
   /* Responsive adjustments */

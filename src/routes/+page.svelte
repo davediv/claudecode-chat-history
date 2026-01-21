@@ -19,8 +19,9 @@
   import DetailPane from "$lib/components/DetailPane.svelte";
   import ConversationDetail from "$lib/components/ConversationDetail.svelte";
   import ToastContainer from "$lib/components/ToastContainer.svelte";
+  import AnalyticsModal from "$lib/components/AnalyticsModal.svelte";
   import { ErrorBoundary, FilterPills } from "$lib/components";
-  import { tagsStore } from "$lib/stores";
+  import { tagsStore, uiStore } from "$lib/stores";
   import { setTags as setTagsService } from "$lib/services/tauri";
   import type { Conversation, Message, ContentBlock } from "$lib/types";
 
@@ -254,8 +255,13 @@
 
     switch (event.key) {
       case "Escape":
+        // Close analytics modal first if open
+        if (uiStore.analyticsModalOpen) {
+          event.preventDefault();
+          uiStore.closeAnalyticsModal();
+        }
         // If conversation is selected, clear selection and focus list
-        if (selectedConversationId) {
+        else if (selectedConversationId) {
           event.preventDefault();
           handleBack();
           // Focus the conversation list for keyboard navigation
@@ -312,6 +318,11 @@
 
   <!-- Toast notifications -->
   <ToastContainer />
+
+  <!-- Analytics modal -->
+  {#if uiStore.analyticsModalOpen}
+    <AnalyticsModal {conversations} />
+  {/if}
 </div>
 
 <style>
