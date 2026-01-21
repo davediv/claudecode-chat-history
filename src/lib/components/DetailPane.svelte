@@ -21,10 +21,10 @@
   let { hasSelection = false, isLoading = false, children }: Props = $props();
 </script>
 
-<main class="detail-pane">
+<main class="detail-pane" aria-label="Conversation details" aria-busy={isLoading}>
   {#if isLoading}
-    <div class="detail-loading">
-      <div class="loading-spinner"></div>
+    <div class="detail-loading" role="status" aria-live="polite">
+      <div class="loading-spinner" aria-hidden="true"></div>
       <span>Loading conversation...</span>
     </div>
   {:else if !hasSelection}

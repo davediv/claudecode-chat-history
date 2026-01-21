@@ -31,7 +31,7 @@
   let { conversations = [], selectedId = null, onSelect, isLoading = false }: Props = $props();
 </script>
 
-<aside class="sidebar">
+<aside class="sidebar" aria-label="Conversation list">
   <ConversationList {conversations} {selectedId} {onSelect} {isLoading} />
 </aside>
 

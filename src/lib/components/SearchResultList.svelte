@@ -66,6 +66,19 @@
 </script>
 
 <div class="search-results" role="listbox" aria-label="Search results">
+  <!-- Screen reader announcement for result count -->
+  {#if query && !isSearching}
+    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+      {#if results.length === 0}
+        No results found for "{query}"
+      {:else if results.length === 1}
+        1 result found for "{query}"
+      {:else}
+        {results.length} results found for "{query}"
+      {/if}
+    </div>
+  {/if}
+
   <!-- Results header -->
   {#if query && !isSearching}
     <div class="results-header">
@@ -148,6 +161,19 @@
 </div>
 
 <style>
+  /* Screen reader only - visually hidden but accessible */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .search-results {
     height: 100%;
     width: 100%;
