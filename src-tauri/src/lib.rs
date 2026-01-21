@@ -8,8 +8,9 @@ pub mod state;
 pub mod watcher;
 
 use crate::state::AppState;
+use crate::watcher::start_watcher;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 // Re-export command handlers
 pub use commands::{get_conversation, get_conversations, get_projects, search_conversations};
@@ -33,6 +34,7 @@ pub fn run() {
 
     // Wrap in Arc for shared state
     let app_state = Arc::new(app_state);
+    let app_state_for_watcher = app_state.clone();
 
     // Also provide database directly for compatibility with existing commands
     let db = app_state.db();
@@ -44,6 +46,22 @@ pub fn run() {
         .manage(db)
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![greet, get_conversations, get_conversation, get_projects, search_conversations])
+        .setup(move |app| {
+            // Start file watcher after app is ready
+            let app_handle = app.handle().clone();
+            match start_watcher(app_handle, app_state_for_watcher) {
+                Ok(handle) => {
+                    info!("File watcher started successfully");
+                    // Store handle in app state for cleanup on exit
+                    // For now, we let it run for the lifetime of the app
+                    std::mem::forget(handle);
+                }
+                Err(e) => {
+                    error!("Failed to start file watcher: {}. App will still work but won't detect new conversations.", e);
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

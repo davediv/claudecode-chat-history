@@ -136,14 +136,26 @@ pub fn rebuild_search_index(db: &Database) -> DbResult<usize> {
 /// This is useful for incremental updates when a single conversation changes.
 pub fn index_conversation(conn: &Connection, conversation: &ParsedConversation) -> DbResult<()> {
     let content = extract_searchable_content(conversation);
+    index_conversation_content(conn, &conversation.id, &content, &conversation.project_name)
+}
 
+/// Indexes a conversation by ID with provided content.
+///
+/// This is a lower-level function useful when you already have the content
+/// extracted (e.g., from the file watcher).
+pub fn index_conversation_content(
+    conn: &Connection,
+    conversation_id: &str,
+    content: &str,
+    project_name: &str,
+) -> DbResult<()> {
     // Get the rowid for this conversation
     let rowid: i64 = conn.query_row(
         "SELECT rowid FROM conversations WHERE id = ?1",
-        [&conversation.id],
+        [conversation_id],
         |row| row.get(0),
     ).map_err(|e| {
-        warn!("Conversation {} not found: {}", conversation.id, e);
+        warn!("Conversation {} not found: {}", conversation_id, e);
         DbError::Sqlite(e)
     })?;
 
@@ -153,10 +165,10 @@ pub fn index_conversation(conn: &Connection, conversation: &ParsedConversation) 
     // Insert new entry
     conn.execute(
         "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (?1, ?2, ?3)",
-        rusqlite::params![rowid, content, conversation.project_name],
+        rusqlite::params![rowid, content, project_name],
     )?;
 
-    debug!("Indexed conversation {} in FTS", conversation.id);
+    debug!("Indexed conversation {} in FTS", conversation_id);
     Ok(())
 }
 
