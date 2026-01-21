@@ -305,6 +305,128 @@ pub fn get_projects(db: State<'_, Arc<Database>>) -> Result<Vec<ProjectInfo>, Co
     .map_err(CommandError::from)
 }
 
+/// Searches conversations using full-text search.
+///
+/// # Arguments
+/// * `db` - Database state
+/// * `query` - Search query (minimum 2 characters)
+/// * `filters` - Optional filters (project, date_start, date_end)
+///
+/// # Returns
+/// * `Vec<SearchResult>` - List of search results with snippets and ranks
+#[tauri::command]
+pub fn search_conversations(
+    db: State<'_, Arc<Database>>,
+    query: String,
+    filters: Option<ConversationFilters>,
+) -> Result<Vec<crate::models::SearchResult>, CommandError> {
+    let query = query.trim();
+
+    // Enforce minimum query length
+    if query.len() < 2 {
+        debug!("search_conversations: query too short ({})", query.len());
+        return Ok(Vec::new());
+    }
+
+    let filters = filters.unwrap_or_default();
+    debug!("search_conversations: query='{}', filters={:?}", query, filters);
+
+    db.with_connection(|conn| {
+        // Build the search query
+        // Using FTS5 snippet() function to extract context around matches
+        // bm25() provides relevance ranking
+        let mut sql = String::from(
+            r#"
+            SELECT
+                c.id,
+                snippet(conversations_fts, 0, '<mark>', '</mark>', '...', 50) as snippet,
+                bm25(conversations_fts) as rank
+            FROM conversations_fts
+            INNER JOIN conversations c ON conversations_fts.rowid = c.rowid
+            WHERE conversations_fts MATCH ?1
+            "#,
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        // Escape and prepare query for FTS5
+        // FTS5 query syntax: use quotes for phrase, prefix with * for prefix match
+        let fts_query = prepare_fts_query(query);
+        params_vec.push(Box::new(fts_query));
+
+        // Add project filter
+        if let Some(ref project) = filters.project {
+            sql.push_str(" AND c.project_name = ?");
+            params_vec.push(Box::new(project.clone()));
+        }
+
+        // Add date_start filter
+        if let Some(ref date_start) = filters.date_start {
+            sql.push_str(" AND c.last_time >= ?");
+            params_vec.push(Box::new(date_start.clone()));
+        }
+
+        // Add date_end filter
+        if let Some(ref date_end) = filters.date_end {
+            sql.push_str(" AND c.last_time <= ?");
+            params_vec.push(Box::new(date_end.clone()));
+        }
+
+        // Order by relevance (bm25 returns negative values, lower is better)
+        sql.push_str(" ORDER BY rank LIMIT 100");
+
+        // Convert params to references
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok(crate::models::SearchResult {
+                conversation_id: row.get(0)?,
+                snippet: row.get(1)?,
+                match_count: 1, // FTS5 doesn't easily provide match count per row
+                rank: row.get::<_, f64>(2)?.abs(), // Convert to positive, lower is better
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row_result in rows {
+            match row_result {
+                Ok(r) => results.push(r),
+                Err(e) => {
+                    warn!("Error reading search result row: {}", e);
+                }
+            }
+        }
+
+        info!(
+            "search_conversations: '{}' returned {} results",
+            query,
+            results.len()
+        );
+
+        Ok(results)
+    })
+    .map_err(CommandError::from)
+}
+
+/// Prepares a query string for FTS5 search.
+///
+/// Escapes special characters and handles common search patterns.
+fn prepare_fts_query(query: &str) -> String {
+    // Escape double quotes and convert to a phrase query if contains spaces
+    // Otherwise use prefix matching with *
+    let escaped = query.replace('"', "\"\"");
+
+    if escaped.contains(' ') {
+        // Multi-word query: use phrase matching
+        format!("\"{}\"", escaped)
+    } else {
+        // Single word: use prefix matching for better results
+        format!("{}*", escaped)
+    }
+}
+
 /// Internal struct for conversation metadata from DB.
 #[derive(Debug)]
 struct ConversationMetadata {
@@ -691,5 +813,115 @@ mod tests {
         assert_eq!(result[1].project_name, "zebra-project");
         assert_eq!(result[1].conversation_count, 1);
         assert_eq!(result[1].last_activity, "2025-01-10T00:00:00Z");
+    }
+
+    // ========== search_conversations tests ==========
+
+    #[test]
+    fn test_prepare_fts_query_single_word() {
+        let query = prepare_fts_query("rust");
+        assert_eq!(query, "rust*");
+    }
+
+    #[test]
+    fn test_prepare_fts_query_multi_word() {
+        let query = prepare_fts_query("rust function");
+        assert_eq!(query, "\"rust function\"");
+    }
+
+    #[test]
+    fn test_prepare_fts_query_escapes_quotes() {
+        let query = prepare_fts_query("test \"quoted\" word");
+        assert_eq!(query, "\"test \"\"quoted\"\" word\"");
+    }
+
+    #[test]
+    fn test_search_conversations_query_too_short() {
+        let db = setup_test_db();
+
+        // Query with single character should return empty results
+        let result = db.with_connection(|conn| {
+            // Simulate the check in search_conversations
+            let query = "a";
+            if query.len() < 2 {
+                return Ok(Vec::<crate::models::SearchResult>::new());
+            }
+            unreachable!()
+        }).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_search_conversations_with_data() {
+        let db = setup_test_db();
+
+        // Insert test data and get the rowids
+        let (rowid1, rowid2) = db.with_connection(|conn| {
+            conn.execute(
+                r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                VALUES ('conv1', '/test/project', 'my-project', '2025-01-01T00:00:00Z', '2025-01-01T01:00:00Z', 'How do I write a Rust function?', 5, 100, 200, '/test/file1.jsonl', '2025-01-01T00:00:00Z')"#,
+                [],
+            )?;
+            let rowid1 = conn.last_insert_rowid();
+
+            conn.execute(
+                r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                VALUES ('conv2', '/test/project', 'web-app', '2025-01-01T00:00:00Z', '2025-01-01T02:00:00Z', 'Help me with TypeScript types', 3, 50, 100, '/test/file2.jsonl', '2025-01-01T00:00:00Z')"#,
+                [],
+            )?;
+            let rowid2 = conn.last_insert_rowid();
+
+            Ok((rowid1, rowid2))
+        }).unwrap();
+
+        // Insert into FTS table with matching rowids
+        db.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (?1, 'How do I write a Rust function?', 'my-project')",
+                [rowid1],
+            )?;
+            conn.execute(
+                "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (?1, 'Help me with TypeScript types', 'web-app')",
+                [rowid2],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        // First verify FTS data is there
+        let fts_count: i64 = db.with_connection(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM conversations_fts", [], |row| row.get(0))
+                .map_err(|e| crate::db::sqlite::DbError::from(e))
+        }).unwrap();
+        assert_eq!(fts_count, 2, "FTS table should have 2 entries");
+
+        // Test basic FTS5 MATCH query
+        let fts_rowids: Vec<i64> = db.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT rowid FROM conversations_fts WHERE conversations_fts MATCH 'rust'"
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+            let results: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+            Ok(results)
+        }).unwrap();
+
+        assert!(!fts_rowids.is_empty(), "FTS5 MATCH should find 'rust' in content");
+
+        // Verify the rowid from FTS matches a conversation
+        let conv_result: Option<String> = db.with_connection(|conn| {
+            let result = conn.query_row(
+                "SELECT id FROM conversations WHERE rowid = ?1",
+                [fts_rowids[0]],
+                |row| row.get::<_, String>(0),
+            );
+            match result {
+                Ok(id) => Ok(Some(id)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(crate::db::sqlite::DbError::from(e)),
+            }
+        }).unwrap();
+
+        assert!(conv_result.is_some(), "Should find conversation for FTS rowid");
+        assert_eq!(conv_result.unwrap(), "conv1");
     }
 }

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::info;
 
 // Re-export command handlers
-pub use commands::{get_conversation, get_conversations, get_projects};
+pub use commands::{get_conversation, get_conversations, get_projects, search_conversations};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -43,7 +43,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(db)
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![greet, get_conversations, get_conversation, get_projects])
+        .invoke_handler(tauri::generate_handler![greet, get_conversations, get_conversation, get_projects, search_conversations])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
