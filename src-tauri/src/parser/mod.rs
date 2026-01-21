@@ -7,6 +7,7 @@
 pub mod jsonl;
 
 pub use jsonl::{
-    discover_jsonl_files, get_claude_projects_dir, parse_jsonl_line, ParserError, ParserResult,
-    RawContent, RawContentBlock, RawInnerMessage, RawMessage, RawMessageType, RawTokenCount,
+    discover_jsonl_files, get_claude_projects_dir, parse_conversation_file, parse_jsonl_line,
+    ParsedConversation, ParserError, ParserResult, RawContent, RawContentBlock, RawInnerMessage,
+    RawMessage, RawMessageType, RawTokenCount,
 };

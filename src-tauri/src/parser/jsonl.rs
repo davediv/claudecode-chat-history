@@ -5,10 +5,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Parser-related errors.
 #[derive(Error, Debug)]
@@ -227,6 +230,214 @@ fn parse_inner_message(value: &Value) -> ParserResult<RawInnerMessage> {
     };
 
     Ok(RawInnerMessage { content, role })
+}
+
+/// A parsed conversation aggregated from JSONL messages.
+/// Contains all messages grouped by session ID with calculated metadata.
+#[derive(Debug, Clone)]
+pub struct ParsedConversation {
+    /// Unique ID derived from hash of file path + session ID.
+    pub id: String,
+    /// Original project directory path (extracted from file path).
+    pub project_path: String,
+    /// Display name (last 2 path segments).
+    pub project_name: String,
+    /// First message timestamp (ISO 8601).
+    pub start_time: String,
+    /// Last message timestamp (ISO 8601).
+    pub last_time: String,
+    /// All raw messages in chronological order.
+    pub messages: Vec<RawMessage>,
+    /// Total input tokens across all messages.
+    pub total_input_tokens: i64,
+    /// Total output tokens across all messages.
+    pub total_output_tokens: i64,
+    /// Session ID from the JSONL file.
+    pub session_id: String,
+    /// Source file path.
+    pub file_path: PathBuf,
+}
+
+/// Parses a JSONL conversation file and groups messages by session ID.
+///
+/// Reads the file line by line, parses each line, and groups messages
+/// into conversations. Calculates metadata like timestamps and token counts.
+///
+/// # Arguments
+/// * `file_path` - Path to the JSONL file
+///
+/// # Returns
+/// * `Ok(Vec<ParsedConversation>)` - List of conversations found in the file
+/// * Empty vec if file is empty or contains no valid messages
+///
+/// # Example
+/// ```ignore
+/// let conversations = parse_conversation_file(Path::new("/path/to/session.jsonl"))?;
+/// for conv in conversations {
+///     println!("Conversation {} has {} messages", conv.id, conv.messages.len());
+/// }
+/// ```
+pub fn parse_conversation_file(file_path: &Path) -> ParserResult<Vec<ParsedConversation>> {
+    debug!("Parsing conversation file: {:?}", file_path);
+
+    // Open the file
+    let file = File::open(file_path)?;
+    let reader = BufReader::new(file);
+
+    // Group messages by session ID
+    let mut sessions: HashMap<String, Vec<RawMessage>> = HashMap::new();
+    let mut line_number = 0;
+    let mut parse_errors = 0;
+
+    for line_result in reader.lines() {
+        line_number += 1;
+        let line = match line_result {
+            Ok(l) => l,
+            Err(e) => {
+                warn!("Failed to read line {} in {:?}: {}", line_number, file_path, e);
+                parse_errors += 1;
+                continue;
+            }
+        };
+
+        // Skip empty lines
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        // Parse the line
+        match parse_jsonl_line(&line) {
+            Ok(msg) => {
+                // Use session_id if present, otherwise use "default"
+                let session_id = msg.session_id.clone().unwrap_or_else(|| "default".to_string());
+                sessions.entry(session_id).or_default().push(msg);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to parse line {} in {:?}: {}",
+                    line_number, file_path, e
+                );
+                parse_errors += 1;
+            }
+        }
+    }
+
+    if parse_errors > 0 {
+        debug!(
+            "Encountered {} parse errors in {:?} ({} lines total)",
+            parse_errors, file_path, line_number
+        );
+    }
+
+    // Extract project info from file path
+    let (project_path, project_name) = extract_project_info(file_path);
+
+    // Build conversations from sessions
+    let mut conversations = Vec::new();
+    for (session_id, messages) in sessions {
+        if messages.is_empty() {
+            continue;
+        }
+
+        // Sort messages by timestamp (if available)
+        let mut sorted_messages = messages;
+        sorted_messages.sort_by(|a, b| {
+            let time_a = a.timestamp.as_deref().unwrap_or("");
+            let time_b = b.timestamp.as_deref().unwrap_or("");
+            time_a.cmp(time_b)
+        });
+
+        // Calculate metadata
+        let start_time = sorted_messages
+            .first()
+            .and_then(|m| m.timestamp.clone())
+            .unwrap_or_default();
+
+        let last_time = sorted_messages
+            .last()
+            .and_then(|m| m.timestamp.clone())
+            .unwrap_or_default();
+
+        let (total_input_tokens, total_output_tokens) =
+            calculate_total_tokens(&sorted_messages);
+
+        // Generate unique ID
+        let id = generate_conversation_id(file_path, &session_id);
+
+        conversations.push(ParsedConversation {
+            id,
+            project_path: project_path.clone(),
+            project_name: project_name.clone(),
+            start_time,
+            last_time,
+            messages: sorted_messages,
+            total_input_tokens,
+            total_output_tokens,
+            session_id,
+            file_path: file_path.to_path_buf(),
+        });
+    }
+
+    // Sort conversations by start time (newest first)
+    conversations.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+
+    info!(
+        "Parsed {} conversations from {:?}",
+        conversations.len(),
+        file_path
+    );
+    Ok(conversations)
+}
+
+/// Extracts project path and name from a JSONL file path.
+///
+/// The file path structure is: `~/.claude/projects/{project-hash}/{session}.jsonl`
+/// The project path is the parent directory, and the project name is derived
+/// from the last 2 path segments before the hash.
+fn extract_project_info(file_path: &Path) -> (String, String) {
+    // Get the parent directory (project hash directory)
+    let project_dir = file_path.parent().unwrap_or(Path::new(""));
+    let project_path = project_dir.to_string_lossy().to_string();
+
+    // Try to get a meaningful project name from the path
+    // The structure is: ~/.claude/projects/{project-hash}
+    // The hash directory name is typically based on the original project path
+    let project_name = project_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    (project_path, project_name)
+}
+
+/// Calculates total input and output tokens from a list of messages.
+fn calculate_total_tokens(messages: &[RawMessage]) -> (i64, i64) {
+    let mut total_input = 0i64;
+    let mut total_output = 0i64;
+
+    for msg in messages {
+        if let Some(ref tokens) = msg.token_count {
+            total_input += tokens.input;
+            total_output += tokens.output;
+        }
+    }
+
+    (total_input, total_output)
+}
+
+/// Generates a unique, deterministic conversation ID from file path and session ID.
+///
+/// Uses a simple hash to create a short, reproducible ID.
+fn generate_conversation_id(file_path: &Path, session_id: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+
+    let mut hasher = DefaultHasher::new();
+    file_path.to_string_lossy().hash(&mut hasher);
+    session_id.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    // Format as hex string, taking first 12 characters for brevity
+    format!("{:016x}", hash)[..12].to_string()
 }
 
 /// Gets the Claude projects directory path.
@@ -716,6 +927,302 @@ mod tests {
                 assert!(text.contains("🌍"));
             }
             RawContent::Blocks(_) => panic!("Expected text content"),
+        }
+    }
+
+    // ========== parse_conversation_file tests ==========
+
+    #[test]
+    fn test_parse_conversation_file_single_session() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("project-hash").join("session.jsonl");
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+
+        let content = r#"{"type":"user","message":{"content":"Hello"},"timestamp":"2025-01-15T10:00:00Z","sessionId":"session-1"}
+{"type":"assistant","message":{"content":"Hi there!"},"timestamp":"2025-01-15T10:00:05Z","sessionId":"session-1","tokenCount":{"input":5,"output":10}}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok(), "Should parse conversation file");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1, "Should have 1 conversation");
+
+        let conv = &conversations[0];
+        assert_eq!(conv.session_id, "session-1");
+        assert_eq!(conv.messages.len(), 2);
+        assert_eq!(conv.start_time, "2025-01-15T10:00:00Z");
+        assert_eq!(conv.last_time, "2025-01-15T10:00:05Z");
+        assert_eq!(conv.total_input_tokens, 5);
+        assert_eq!(conv.total_output_tokens, 10);
+    }
+
+    #[test]
+    fn test_parse_conversation_file_multiple_sessions() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("project-hash").join("multi.jsonl");
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+
+        let content = r#"{"type":"user","message":{"content":"First session"},"timestamp":"2025-01-15T09:00:00Z","sessionId":"session-A"}
+{"type":"user","message":{"content":"Second session"},"timestamp":"2025-01-15T10:00:00Z","sessionId":"session-B"}
+{"type":"assistant","message":{"content":"Reply A"},"timestamp":"2025-01-15T09:00:05Z","sessionId":"session-A"}
+{"type":"assistant","message":{"content":"Reply B"},"timestamp":"2025-01-15T10:00:05Z","sessionId":"session-B"}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok());
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 2, "Should have 2 conversations");
+
+        // Should be sorted by start_time (newest first)
+        assert_eq!(conversations[0].session_id, "session-B");
+        assert_eq!(conversations[1].session_id, "session-A");
+
+        // Each conversation should have 2 messages
+        assert_eq!(conversations[0].messages.len(), 2);
+        assert_eq!(conversations[1].messages.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_conversation_file_empty_file() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("empty.jsonl");
+
+        File::create(&file_path).unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok(), "Should handle empty file gracefully");
+
+        let conversations = result.unwrap();
+        assert!(conversations.is_empty(), "Empty file should return no conversations");
+    }
+
+    #[test]
+    fn test_parse_conversation_file_with_empty_lines() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("with-blanks.jsonl");
+
+        let content = r#"{"type":"user","message":{"content":"Hello"},"sessionId":"s1"}
+
+{"type":"assistant","message":{"content":"Hi"},"sessionId":"s1"}
+
+"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok(), "Should skip empty lines");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+        assert_eq!(conversations[0].messages.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_conversation_file_with_malformed_lines() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("malformed.jsonl");
+
+        let content = r#"{"type":"user","message":{"content":"Valid"},"sessionId":"s1"}
+{invalid json here}
+{"type":"assistant","message":{"content":"Also valid"},"sessionId":"s1"}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok(), "Should skip malformed lines");
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+        assert_eq!(
+            conversations[0].messages.len(),
+            2,
+            "Should have 2 valid messages"
+        );
+    }
+
+    #[test]
+    fn test_parse_conversation_file_no_session_id() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("no-session.jsonl");
+
+        let content = r#"{"type":"user","message":{"content":"No session ID"}}
+{"type":"assistant","message":{"content":"Reply"}}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok());
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations.len(), 1);
+        assert_eq!(
+            conversations[0].session_id, "default",
+            "Should use 'default' session ID"
+        );
+    }
+
+    #[test]
+    fn test_parse_conversation_file_token_aggregation() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("tokens.jsonl");
+
+        let content = r#"{"type":"user","message":{"content":"Q1"},"sessionId":"s1","tokenCount":{"input":10,"output":0}}
+{"type":"assistant","message":{"content":"A1"},"sessionId":"s1","tokenCount":{"input":0,"output":20}}
+{"type":"user","message":{"content":"Q2"},"sessionId":"s1","tokenCount":{"input":15,"output":0}}
+{"type":"assistant","message":{"content":"A2"},"sessionId":"s1","tokenCount":{"input":0,"output":30}}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok());
+
+        let conversations = result.unwrap();
+        assert_eq!(conversations[0].total_input_tokens, 25);
+        assert_eq!(conversations[0].total_output_tokens, 50);
+    }
+
+    #[test]
+    fn test_parse_conversation_file_messages_sorted_by_timestamp() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("unsorted.jsonl");
+
+        // Messages in file are out of order
+        let content = r#"{"type":"assistant","message":{"content":"Third"},"timestamp":"2025-01-15T10:02:00Z","sessionId":"s1"}
+{"type":"user","message":{"content":"First"},"timestamp":"2025-01-15T10:00:00Z","sessionId":"s1"}
+{"type":"user","message":{"content":"Second"},"timestamp":"2025-01-15T10:01:00Z","sessionId":"s1"}"#;
+
+        File::create(&file_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+
+        let result = parse_conversation_file(&file_path);
+        assert!(result.is_ok());
+
+        let conversations = result.unwrap();
+        let msgs = &conversations[0].messages;
+
+        // Should be sorted chronologically
+        assert_eq!(msgs[0].timestamp, Some("2025-01-15T10:00:00Z".to_string()));
+        assert_eq!(msgs[1].timestamp, Some("2025-01-15T10:01:00Z".to_string()));
+        assert_eq!(msgs[2].timestamp, Some("2025-01-15T10:02:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_extract_project_info() {
+        let path = Path::new("/Users/test/.claude/projects/abc123-hash/session.jsonl");
+        let (project_path, project_name) = extract_project_info(path);
+
+        assert_eq!(
+            project_path,
+            "/Users/test/.claude/projects/abc123-hash"
+        );
+        assert_eq!(project_name, "abc123-hash");
+    }
+
+    #[test]
+    fn test_generate_conversation_id_deterministic() {
+        let path = Path::new("/test/path/session.jsonl");
+        let session_id = "session-123";
+
+        let id1 = generate_conversation_id(path, session_id);
+        let id2 = generate_conversation_id(path, session_id);
+
+        assert_eq!(id1, id2, "Same inputs should produce same ID");
+        assert_eq!(id1.len(), 12, "ID should be 12 characters");
+    }
+
+    #[test]
+    fn test_generate_conversation_id_unique() {
+        let path1 = Path::new("/path/a/session.jsonl");
+        let path2 = Path::new("/path/b/session.jsonl");
+        let session_id = "session-123";
+
+        let id1 = generate_conversation_id(path1, session_id);
+        let id2 = generate_conversation_id(path2, session_id);
+
+        assert_ne!(id1, id2, "Different paths should produce different IDs");
+    }
+
+    #[test]
+    fn test_calculate_total_tokens() {
+        let messages = vec![
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("test".to_string()),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: Some(RawTokenCount {
+                    input: 10,
+                    output: 0,
+                }),
+                uuid: None,
+                session_id: None,
+            },
+            RawMessage {
+                message_type: RawMessageType::Assistant,
+                message: RawInnerMessage {
+                    content: RawContent::Text("reply".to_string()),
+                    role: Some("assistant".to_string()),
+                },
+                timestamp: None,
+                token_count: Some(RawTokenCount {
+                    input: 0,
+                    output: 25,
+                }),
+                uuid: None,
+                session_id: None,
+            },
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("no tokens".to_string()),
+                    role: None,
+                },
+                timestamp: None,
+                token_count: None, // No token count
+                uuid: None,
+                session_id: None,
+            },
+        ];
+
+        let (input, output) = calculate_total_tokens(&messages);
+        assert_eq!(input, 10);
+        assert_eq!(output, 25);
+    }
+
+    #[test]
+    fn test_parse_conversation_file_nonexistent() {
+        let result = parse_conversation_file(Path::new("/nonexistent/file.jsonl"));
+        assert!(result.is_err(), "Should error for nonexistent file");
+
+        match result.unwrap_err() {
+            ParserError::Io(_) => {}
+            other => panic!("Expected Io error, got {:?}", other),
         }
     }
 }
