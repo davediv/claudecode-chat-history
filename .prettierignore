@@ -1,0 +1,15 @@
+# Package managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Build outputs
+build/
+.svelte-kit/
+dist/
+
+# Rust/Tauri
+src-tauri/target/
+
+# Other
+*.md
