@@ -28,6 +28,21 @@
   let isLoadingList = $state(false);
   let isLoadingDetail = $state(false);
 
+  // Development: Generate mock data for testing virtual scrolling
+  // Remove this in production when connecting to actual Tauri API
+  $effect(() => {
+    if (import.meta.env.DEV) {
+      // Generate 1500 mock conversations for testing
+      conversations = Array.from({ length: 1500 }, (_, i) => ({
+        id: `conv-${i}`,
+        projectName: `project-${Math.floor(i / 50)}`,
+        preview: `This is a preview message for conversation ${i}. It contains some sample text that demonstrates truncation when the content exceeds 100 characters.`,
+        lastTime: new Date(Date.now() - i * 60 * 60 * 1000).toISOString(),
+        messageCount: Math.floor(Math.random() * 50) + 1,
+      }));
+    }
+  });
+
   function handleSearch(query: string) {
     searchQuery = query;
     // TODO: Implement search filtering
