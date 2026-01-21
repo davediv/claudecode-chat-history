@@ -26,13 +26,21 @@
     onSelect?: (id: string) => void;
     /** Whether data is loading */
     isLoading?: boolean;
+    /** Reference to the conversation list element (bindable) */
+    listRef?: HTMLElement;
   }
 
-  let { conversations = [], selectedId = null, onSelect, isLoading = false }: Props = $props();
+  let {
+    conversations = [],
+    selectedId = null,
+    onSelect,
+    isLoading = false,
+    listRef = $bindable(),
+  }: Props = $props();
 </script>
 
 <aside class="sidebar" aria-label="Conversation list">
-  <ConversationList {conversations} {selectedId} {onSelect} {isLoading} />
+  <ConversationList {conversations} {selectedId} {onSelect} {isLoading} bind:listRef />
 </aside>
 
 <style>

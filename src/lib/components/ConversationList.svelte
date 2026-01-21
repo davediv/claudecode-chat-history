@@ -29,9 +29,17 @@
     onSelect?: (id: string) => void;
     /** Whether data is loading */
     isLoading?: boolean;
+    /** Reference to the list element (bindable) */
+    listRef?: HTMLElement;
   }
 
-  let { conversations, selectedId = null, onSelect, isLoading = false }: Props = $props();
+  let {
+    conversations,
+    selectedId = null,
+    onSelect,
+    isLoading = false,
+    listRef = $bindable(),
+  }: Props = $props();
 
   // Reference to virtual list for programmatic scrolling
   let virtualListRef: SvelteVirtualList<ConversationItem> | undefined = $state();
@@ -109,6 +117,7 @@
 </script>
 
 <div
+  bind:this={listRef}
   class="conversation-list"
   role="listbox"
   aria-label="Conversations"

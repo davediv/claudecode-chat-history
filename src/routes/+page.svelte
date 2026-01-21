@@ -6,7 +6,14 @@
    * - Header bar with search and filters
    * - Two-column split: sidebar (conversation list) and detail pane
    * - Error boundaries for graceful error handling
+   *
+   * Keyboard navigation:
+   * - `/` focuses search (handled by SearchInput)
+   * - `j/k` navigates conversation list (handled by ConversationList)
+   * - `Escape` clears selection and closes modals
+   * - `Enter` activates focused element
    */
+  import { onMount, onDestroy } from "svelte";
   import Header from "$lib/components/Header.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import DetailPane from "$lib/components/DetailPane.svelte";
@@ -164,19 +171,56 @@
     selectedConversationId = null;
     selectedConversation = null;
   }
+
+  // Reference to conversation list for keyboard focus
+  let conversationListRef: HTMLElement | undefined = $state();
+
+  /**
+   * Global keyboard handler for page-level shortcuts.
+   * Individual components handle their own shortcuts (/, j/k, etc.)
+   * This handles Escape at page level for clearing selection.
+   */
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    // Ignore if typing in an input, textarea, or contenteditable
+    const target = event.target as HTMLElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+      return;
+    }
+
+    switch (event.key) {
+      case "Escape":
+        // If conversation is selected, clear selection and focus list
+        if (selectedConversationId) {
+          event.preventDefault();
+          handleBack();
+          // Focus the conversation list for keyboard navigation
+          conversationListRef?.focus();
+        }
+        break;
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener("keydown", handleGlobalKeydown);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener("keydown", handleGlobalKeydown);
+  });
 </script>
 
 <div class="app-layout">
   <Header onSearch={handleSearch} />
   <FilterPills onFilterChange={handleFilterChange} />
 
-  <div class="main-content">
+  <div id="main-content" class="main-content">
     <ErrorBoundary title="Sidebar error" description="Failed to load the conversation list.">
       <Sidebar
         {conversations}
         selectedId={selectedConversationId}
         onSelect={handleSelectConversation}
         isLoading={isLoadingList}
+        bind:listRef={conversationListRef}
       />
     </ErrorBoundary>
 
