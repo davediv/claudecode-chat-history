@@ -9,6 +9,7 @@
   import Header from "$lib/components/Header.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import DetailPane from "$lib/components/DetailPane.svelte";
+  import ToastContainer from "$lib/components/ToastContainer.svelte";
 
   // Search state
   let searchQuery = $state("");
@@ -53,6 +54,9 @@
       <!-- Conversation content will be rendered here -->
     </DetailPane>
   </div>
+
+  <!-- Toast notifications -->
+  <ToastContainer />
 </div>
 
 <style>
