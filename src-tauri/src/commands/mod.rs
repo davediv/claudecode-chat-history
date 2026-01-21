@@ -4,10 +4,14 @@
 //! Commands include: `get_conversations`, `get_conversation`, `search_conversations`, `get_projects`.
 
 use crate::db::sqlite::{Database, DbError};
-use crate::models::{ConversationFilters, ConversationSummary};
+use crate::models::{
+    Conversation, ConversationFilters, ConversationSummary, Message, MessageRole, TokenCount,
+};
+use crate::parser::{parse_content_blocks, parse_conversation_file, ParserError, RawMessageType};
+use std::path::Path;
 use std::sync::Arc;
 use tauri::State;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Pagination parameters for list queries.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -30,6 +34,9 @@ fn default_limit() -> i32 {
 pub enum CommandError {
     #[error("Database error: {0}")]
     Database(#[from] DbError),
+
+    #[error("Parser error: {0}")]
+    Parser(#[from] ParserError),
 
     #[error("Not found: {0}")]
     NotFound(String),
@@ -132,6 +139,140 @@ pub fn get_conversations(
         Ok(results)
     })
     .map_err(CommandError::from)
+}
+
+/// Gets a single conversation with all messages and content blocks.
+///
+/// # Arguments
+/// * `db` - Database state
+/// * `id` - Conversation ID to retrieve
+///
+/// # Returns
+/// * `Conversation` - Full conversation with parsed messages and content blocks
+///
+/// # Errors
+/// * `NotFound` - If no conversation with the given ID exists
+/// * `Parser` - If the JSONL file cannot be parsed
+#[tauri::command]
+pub fn get_conversation(
+    db: State<'_, Arc<Database>>,
+    id: String,
+) -> Result<Conversation, CommandError> {
+    debug!("get_conversation: id={}", id);
+
+    // Look up conversation metadata from database
+    let metadata = db.with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, project_path, project_name, start_time, last_time, file_path,
+                   total_input_tokens, total_output_tokens
+            FROM conversations
+            WHERE id = ?1
+            "#,
+        )?;
+
+        let row = stmt.query_row([&id], |row| {
+            Ok(ConversationMetadata {
+                id: row.get(0)?,
+                project_path: row.get(1)?,
+                project_name: row.get(2)?,
+                start_time: row.get(3)?,
+                last_time: row.get(4)?,
+                file_path: row.get(5)?,
+                total_input_tokens: row.get(6)?,
+                total_output_tokens: row.get(7)?,
+            })
+        });
+
+        match row {
+            Ok(m) => Ok(Some(m)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(DbError::from(e)),
+        }
+    })?;
+
+    let metadata = metadata.ok_or_else(|| CommandError::NotFound(format!("Conversation not found: {}", id)))?;
+
+    // Parse the JSONL file to get messages
+    let file_path = Path::new(&metadata.file_path);
+    if !file_path.exists() {
+        warn!("Conversation file not found: {:?}", file_path);
+        return Err(CommandError::NotFound(format!(
+            "Conversation file not found: {}",
+            metadata.file_path
+        )));
+    }
+
+    let parsed_conversations = parse_conversation_file(file_path)?;
+
+    // Find the conversation with matching ID
+    let parsed = parsed_conversations
+        .into_iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| CommandError::NotFound(format!("Conversation not found in file: {}", id)))?;
+
+    // Convert RawMessages to Messages with parsed content blocks
+    let messages: Vec<Message> = parsed
+        .messages
+        .iter()
+        .enumerate()
+        .map(|(idx, raw)| {
+            let role = match raw.message_type {
+                RawMessageType::User => MessageRole::User,
+                RawMessageType::Assistant => MessageRole::Assistant,
+                RawMessageType::System => MessageRole::System,
+            };
+
+            let content = parse_content_blocks(&raw.message.content);
+
+            let token_count = raw.token_count.as_ref().map(|tc| TokenCount {
+                input: tc.input,
+                output: tc.output,
+            });
+
+            Message {
+                id: raw.uuid.clone().unwrap_or_else(|| format!("msg_{}", idx)),
+                role,
+                content,
+                timestamp: raw.timestamp.clone().unwrap_or_default(),
+                token_count,
+            }
+        })
+        .collect();
+
+    info!(
+        "get_conversation: loaded {} messages for {}",
+        messages.len(),
+        id
+    );
+
+    Ok(Conversation {
+        id: metadata.id,
+        project_path: metadata.project_path,
+        project_name: metadata.project_name,
+        start_time: metadata.start_time,
+        last_time: metadata.last_time,
+        messages,
+        total_tokens: TokenCount {
+            input: metadata.total_input_tokens,
+            output: metadata.total_output_tokens,
+        },
+        bookmarked: None,
+        tags: None,
+    })
+}
+
+/// Internal struct for conversation metadata from DB.
+#[derive(Debug)]
+struct ConversationMetadata {
+    id: String,
+    project_path: String,
+    project_name: String,
+    start_time: String,
+    last_time: String,
+    file_path: String,
+    total_input_tokens: i64,
+    total_output_tokens: i64,
 }
 
 #[cfg(test)]
@@ -334,5 +475,102 @@ mod tests {
         assert_eq!(result[0].id, "conv8");
         assert_eq!(result[1].id, "conv7");
         assert_eq!(result[2].id, "conv6");
+    }
+
+    // ========== get_conversation tests ==========
+
+    #[test]
+    fn test_get_conversation_metadata_not_found() {
+        let db = setup_test_db();
+
+        // Query a non-existent conversation
+        let result = db.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_path, project_name, start_time, last_time, file_path FROM conversations WHERE id = ?1",
+            )?;
+
+            let row = stmt.query_row(["nonexistent"], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                ))
+            });
+
+            match row {
+                Ok(m) => Ok(Some(m)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(DbError::from(e)),
+            }
+        }).unwrap();
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_conversation_metadata_found() {
+        let db = setup_test_db();
+
+        // Insert test conversation
+        db.with_connection(|conn| {
+            conn.execute(
+                r#"
+                INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
+                VALUES ('test-conv-1', '/home/user/project', 'my-project', '2025-01-01T00:00:00Z', '2025-01-01T01:00:00Z', 'Hello world', 5, 100, 200, '/path/to/file.jsonl', '2025-01-01T00:00:00Z')
+                "#,
+                [],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        // Query the conversation metadata
+        let result = db.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_path, project_name, start_time, last_time, file_path, total_input_tokens, total_output_tokens FROM conversations WHERE id = ?1",
+            )?;
+
+            let row = stmt.query_row(["test-conv-1"], |row| {
+                Ok(ConversationMetadata {
+                    id: row.get(0)?,
+                    project_path: row.get(1)?,
+                    project_name: row.get(2)?,
+                    start_time: row.get(3)?,
+                    last_time: row.get(4)?,
+                    file_path: row.get(5)?,
+                    total_input_tokens: row.get(6)?,
+                    total_output_tokens: row.get(7)?,
+                })
+            });
+
+            match row {
+                Ok(m) => Ok(Some(m)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(DbError::from(e)),
+            }
+        }).unwrap();
+
+        assert!(result.is_some());
+        let metadata = result.unwrap();
+        assert_eq!(metadata.id, "test-conv-1");
+        assert_eq!(metadata.project_name, "my-project");
+        assert_eq!(metadata.total_input_tokens, 100);
+        assert_eq!(metadata.total_output_tokens, 200);
+    }
+
+    #[test]
+    fn test_conversation_metadata_struct() {
+        let metadata = ConversationMetadata {
+            id: "test-123".to_string(),
+            project_path: "/home/user/project".to_string(),
+            project_name: "my-project".to_string(),
+            start_time: "2025-01-01T00:00:00Z".to_string(),
+            last_time: "2025-01-01T01:00:00Z".to_string(),
+            file_path: "/path/to/file.jsonl".to_string(),
+            total_input_tokens: 100,
+            total_output_tokens: 200,
+        };
+
+        assert_eq!(metadata.id, "test-123");
+        assert_eq!(metadata.project_path, "/home/user/project");
+        assert_eq!(metadata.project_name, "my-project");
     }
 }
