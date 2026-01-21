@@ -184,6 +184,20 @@ pub fn init_db(conn: &Connection) -> DbResult<()> {
         "#,
     )?;
 
+    // Create FTS5 virtual table for full-text search
+    // Uses content="" for external content mode - we manage content ourselves
+    // This indexes conversation content and project names for fast searching
+    conn.execute_batch(
+        r#"
+        CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+            content,
+            project_name,
+            content='',
+            contentless_delete=1
+        );
+        "#,
+    )?;
+
     info!("Database schema initialized successfully");
     Ok(())
 }
@@ -224,6 +238,73 @@ mod tests {
                 .unwrap();
             let exists: bool = stmt.exists([]).unwrap();
             assert!(exists, "file_metadata table should exist");
+
+            // Verify FTS5 virtual table exists
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations_fts'")
+                .unwrap();
+            let exists: bool = stmt.exists([]).unwrap();
+            assert!(exists, "conversations_fts FTS5 table should exist");
+
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_fts5_insert_and_search() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        let db = Database::open(db_path).unwrap();
+        db.init_schema().unwrap();
+
+        db.with_connection(|conn| {
+            // Insert test data into FTS5 table
+            conn.execute(
+                "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (1, 'How do I write a Rust function?', 'my-rust-project')",
+                [],
+            )
+            .unwrap();
+
+            conn.execute(
+                "INSERT INTO conversations_fts(rowid, content, project_name) VALUES (2, 'Help me with TypeScript types', 'web-app')",
+                [],
+            )
+            .unwrap();
+
+            // Search for Rust content
+            let mut stmt = conn
+                .prepare("SELECT rowid FROM conversations_fts WHERE conversations_fts MATCH 'Rust'")
+                .unwrap();
+            let results: Vec<i64> = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            assert_eq!(results, vec![1], "Should find the Rust conversation");
+
+            // Search for TypeScript content
+            let mut stmt = conn
+                .prepare("SELECT rowid FROM conversations_fts WHERE conversations_fts MATCH 'TypeScript'")
+                .unwrap();
+            let results: Vec<i64> = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            assert_eq!(results, vec![2], "Should find the TypeScript conversation");
+
+            // Search by project name
+            let mut stmt = conn
+                .prepare("SELECT rowid FROM conversations_fts WHERE project_name MATCH 'rust'")
+                .unwrap();
+            let results: Vec<i64> = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            assert_eq!(results, vec![1], "Should find by project name");
 
             Ok(())
         })
