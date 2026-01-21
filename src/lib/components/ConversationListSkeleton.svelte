@@ -122,4 +122,15 @@
       background-position: -200% 0;
     }
   }
+
+  /* Static placeholder when reduced motion is preferred */
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton-project,
+    .skeleton-time,
+    .skeleton-preview,
+    .skeleton-count {
+      background: var(--color-bg-tertiary);
+      animation: none;
+    }
+  }
 </style>
