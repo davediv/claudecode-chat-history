@@ -80,7 +80,7 @@ pub fn get_conversations(
     let filters = filters.unwrap_or_default();
     let pagination = pagination.unwrap_or_default();
 
-    debug!(
+    info!(
         "get_conversations: filters={:?}, pagination={:?}",
         filters, pagination
     );
