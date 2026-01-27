@@ -11,3 +11,7 @@ vite.config.ts.timestamp-*
 CLAUDE.md
 .claude/
 /docs
+
+# Test artifacts
+playwright-report/
+test-results/
