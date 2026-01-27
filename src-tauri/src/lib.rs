@@ -7,9 +7,12 @@ pub mod search;
 pub mod state;
 pub mod watcher;
 
+use crate::db::metadata::get_modified_files;
+use crate::parser::jsonl::discover_jsonl_files;
 use crate::state::AppState;
-use crate::watcher::start_watcher;
+use crate::watcher::{process_files_and_emit, start_watcher};
 use std::sync::Arc;
+use tauri::Manager;
 use tracing::{error, info};
 
 // Re-export command handlers
@@ -23,6 +26,14 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize tracing subscriber for logging
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
+        .init();
+
     // Initialize application state (database + cache)
     let app_state = AppState::new().expect("Failed to initialize application state");
     info!("Application state initialized");
@@ -48,14 +59,44 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![greet, get_conversations, get_conversation, get_projects, search_conversations, toggle_bookmark, set_tags, get_all_tags])
         .setup(move |app| {
+            // Open devtools in debug mode
+            #[cfg(debug_assertions)]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
+            }
+
             // Start file watcher after app is ready
             let app_handle = app.handle().clone();
-            match start_watcher(app_handle, app_state_for_watcher) {
+            match start_watcher(app_handle.clone(), app_state_for_watcher.clone()) {
                 Ok(handle) => {
                     info!("File watcher started successfully");
                     // Store handle in app state for cleanup on exit
                     // For now, we let it run for the lifetime of the app
                     std::mem::forget(handle);
+
+                    // Perform initial scan of existing JSONL files in a background thread
+                    let scan_app_handle = app_handle;
+                    let scan_app_state = app_state_for_watcher;
+                    std::thread::spawn(move || {
+                        match discover_jsonl_files() {
+                            Ok(all_files) if !all_files.is_empty() => {
+                                info!("Initial scan: found {} JSONL files", all_files.len());
+                                let db = scan_app_state.db();
+                                match db.with_connection(|conn| get_modified_files(conn, &all_files)) {
+                                    Ok(modified) if !modified.is_empty() => {
+                                        info!("Initial scan: {} files need processing", modified.len());
+                                        process_files_and_emit(&modified, &scan_app_handle, &scan_app_state);
+                                    }
+                                    Ok(_) => info!("Initial scan: all files already up to date"),
+                                    Err(e) => error!("Initial scan: failed to check modified files: {}", e),
+                                }
+                            }
+                            Ok(_) => info!("Initial scan: no JSONL files found in ~/.claude/projects/"),
+                            Err(e) => error!("Initial scan: failed to discover JSONL files: {}", e),
+                        }
+                    });
                 }
                 Err(e) => {
                     error!("Failed to start file watcher: {}. App will still work but won't detect new conversations.", e);
