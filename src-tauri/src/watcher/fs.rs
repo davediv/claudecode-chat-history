@@ -47,6 +47,60 @@ pub enum WatcherError {
 /// Event name for conversations updated events sent to frontend.
 pub const CONVERSATIONS_UPDATED_EVENT: &str = "conversations-updated";
 
+/// Processes a batch of files and emits an update event.
+/// This is a public helper for both the file watcher and initial scan.
+pub fn process_files_and_emit(
+    files: &[crate::db::metadata::ModifiedFile],
+    app_handle: &AppHandle,
+    app_state: &Arc<AppState>,
+) {
+    let db = app_state.db();
+
+    let mut new_count = 0;
+    let mut updated_count = 0;
+
+    // Process each file
+    for modified_file in files {
+        match process_single_file(&db, &modified_file.file_path, &modified_file.current_modified_at)
+        {
+            Ok(count) => {
+                if modified_file.is_new {
+                    new_count += count;
+                } else {
+                    updated_count += count;
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Error processing file {:?}: {}",
+                    modified_file.file_path, e
+                );
+            }
+        }
+    }
+
+    // Refresh the conversations cache
+    if let Err(e) = app_state.refresh_conversations_cache() {
+        error!("Error refreshing conversations cache: {}", e);
+    }
+
+    // Emit event to frontend
+    let payload = ConversationsUpdatedPayload {
+        new_count,
+        updated_count,
+        from_watcher: false, // Set to false for initial scan
+    };
+
+    if let Err(e) = app_handle.emit(CONVERSATIONS_UPDATED_EVENT, payload) {
+        error!("Error emitting conversations-updated event: {}", e);
+    } else {
+        info!(
+            "Emitted conversations-updated event: {} new, {} updated",
+            new_count, updated_count
+        );
+    }
+}
+
 /// Payload for the conversations-updated event.
 #[derive(Clone, serde::Serialize)]
 pub struct ConversationsUpdatedPayload {

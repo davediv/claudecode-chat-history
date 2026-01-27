@@ -5,4 +5,4 @@
 
 pub mod fs;
 
-pub use fs::{start_watcher, stop_watcher, WatcherError, WatcherHandle};
+pub use fs::{process_files_and_emit, start_watcher, stop_watcher, WatcherError, WatcherHandle};
