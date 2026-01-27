@@ -44,9 +44,12 @@ export class NetworkError extends TauriError {
 
 /**
  * Check if running in Tauri environment.
+ * Tauri v2 uses __TAURI_INTERNALS__ instead of __TAURI__
  */
 export function isTauriAvailable(): boolean {
-  return typeof window !== "undefined" && "__TAURI__" in window;
+  if (typeof window === "undefined") return false;
+  // Tauri v2 uses __TAURI_INTERNALS__
+  return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
 }
 
 /**

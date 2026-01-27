@@ -109,20 +109,21 @@ export async function load(options?: ConversationFilters): Promise<void> {
       filters = { ...filters, ...options };
     }
 
+    // Tauri v2 uses __TAURI_INTERNALS__ instead of __TAURI__
+    const tauriAvailable =
+      typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+
     // Try to use Tauri IPC if available
-    if (typeof window !== "undefined" && "__TAURI__" in window) {
+    if (tauriAvailable) {
       const { invoke } = await import("@tauri-apps/api/core");
       const result = await invoke<ConversationSummary[]>("get_conversations", {
         filters: Object.keys(filters).length > 0 ? filters : null,
       });
       conversations = result;
-    } else {
-      // Development mode: data comes from +page.svelte mock generator
-      // Keep existing conversations if they were set externally
-      console.log("[conversations store] Running in browser mode, using mock data");
     }
+    // In browser mode, data comes from +page.svelte mock generator
   } catch (err) {
-    console.error("Failed to load conversations:", err);
+    console.error("[conversations store] Failed to load conversations:", err);
     error = err instanceof Error ? err.message : "Failed to load conversations";
   } finally {
     loading = false;
@@ -162,8 +163,11 @@ export async function select(id: string | null): Promise<void> {
   error = null;
 
   try {
-    // Try to use Tauri IPC if available
-    if (typeof window !== "undefined" && "__TAURI__" in window) {
+    // Try to use Tauri IPC if available (Tauri v2 uses __TAURI_INTERNALS__)
+    if (
+      typeof window !== "undefined" &&
+      ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
+    ) {
       const { invoke } = await import("@tauri-apps/api/core");
       const result = await invoke<Conversation>("get_conversation", { id });
       selectedConversation = result;
@@ -309,8 +313,8 @@ export function setLoading(isLoading: boolean): void {
  * Updates both the conversations list and selected conversation if applicable.
  */
 export async function toggleBookmark(conversationId: string): Promise<boolean> {
-  // Try to use Tauri IPC if available
-  if (typeof window !== "undefined" && "__TAURI__" in window) {
+  // Try to use Tauri IPC if available (Tauri v2 uses __TAURI_INTERNALS__)
+  if (typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)) {
     const { invoke } = await import("@tauri-apps/api/core");
     const newStatus = await invoke<boolean>("toggle_bookmark", { conversationId });
 
