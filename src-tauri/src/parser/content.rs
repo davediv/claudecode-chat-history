@@ -15,6 +15,58 @@ static CODE_FENCE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"```(\w*)\n([\s\S]*?)```").expect("Invalid regex pattern")
 });
 
+/// System metadata tag names that should be filtered from display.
+/// These are internal Claude Code system messages that shouldn't appear as user chat bubbles.
+const SYSTEM_METADATA_TAGS: &[&str] = &[
+    "command-name",
+    "command-message",
+    "command-args",
+    "local-command-caveat",
+    "local-command-stdout",
+    "system-reminder",
+];
+
+/// Regex for detecting if content contains system metadata XML tags.
+static SYSTEM_METADATA_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<(command-name|command-message|command-args|local-command-caveat|local-command-stdout|system-reminder)[^>]*>")
+        .expect("Invalid system metadata regex")
+});
+
+/// Checks if content consists only of system metadata XML tags.
+/// Returns true if the content should be filtered from display.
+///
+/// This filters out messages like:
+/// - `<command-name>/clear</command-name>`
+/// - `<local-command-caveat>...</local-command-caveat>`
+/// - `<local-command-stdout></local-command-stdout>`
+///
+/// These appear when users run CLI commands like `/clear` and shouldn't
+/// be shown as separate chat bubbles in the UI.
+pub fn is_system_metadata_content(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || !trimmed.starts_with('<') {
+        return false;
+    }
+
+    // Check if ANY known metadata tag exists
+    if !SYSTEM_METADATA_REGEX.is_match(trimmed) {
+        return false;
+    }
+
+    // Strip all known metadata tags (including content between them) and check if anything meaningful remains
+    let mut remaining = trimmed.to_string();
+    for tag in SYSTEM_METADATA_TAGS {
+        // Remove complete elements: <tag>content</tag> or <tag attr="value">content</tag>
+        // Use [\s\S]*? for non-greedy matching of any content including newlines
+        let element_pattern =
+            Regex::new(&format!(r"<{}[^>]*>[\s\S]*?</{}>", tag, tag)).unwrap();
+        remaining = element_pattern.replace_all(&remaining, "").to_string();
+    }
+
+    // If only whitespace remains, this was a metadata-only message
+    remaining.trim().is_empty()
+}
+
 /// Parses raw content into a vector of ContentBlocks.
 ///
 /// Handles three content formats:
@@ -848,5 +900,81 @@ mod tests {
         assert!(blocks[0].content.contains("\"string\": \"value\""));
         assert!(blocks[0].content.contains("\"number\": 42"));
         assert!(blocks[0].content.contains("\"deep\""));
+    }
+
+    // ========== is_system_metadata_content tests ==========
+
+    #[test]
+    fn test_is_system_metadata_command_name() {
+        assert!(is_system_metadata_content(
+            "<command-name>/clear</command-name>"
+        ));
+    }
+
+    #[test]
+    fn test_is_system_metadata_multiple_tags() {
+        let content = "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>";
+        assert!(is_system_metadata_content(content));
+    }
+
+    #[test]
+    fn test_is_system_metadata_local_command() {
+        assert!(is_system_metadata_content(
+            "<local-command-caveat>Some caveat text</local-command-caveat>"
+        ));
+    }
+
+    #[test]
+    fn test_is_system_metadata_stdout_empty() {
+        assert!(is_system_metadata_content(
+            "<local-command-stdout></local-command-stdout>"
+        ));
+    }
+
+    #[test]
+    fn test_is_system_metadata_system_reminder() {
+        assert!(is_system_metadata_content(
+            "<system-reminder>This is a system reminder</system-reminder>"
+        ));
+    }
+
+    #[test]
+    fn test_is_not_system_metadata_plain_text() {
+        assert!(!is_system_metadata_content("Hello, how are you?"));
+    }
+
+    #[test]
+    fn test_is_not_system_metadata_mixed_content() {
+        assert!(!is_system_metadata_content(
+            "User text <command-name>/clear</command-name> more text"
+        ));
+    }
+
+    #[test]
+    fn test_is_not_system_metadata_empty() {
+        assert!(!is_system_metadata_content(""));
+    }
+
+    #[test]
+    fn test_is_not_system_metadata_whitespace() {
+        assert!(!is_system_metadata_content("   \n\t  "));
+    }
+
+    #[test]
+    fn test_is_not_system_metadata_unknown_xml() {
+        assert!(!is_system_metadata_content("<unknown-tag>content</unknown-tag>"));
+    }
+
+    #[test]
+    fn test_is_system_metadata_with_whitespace() {
+        assert!(is_system_metadata_content(
+            "  <command-name>/clear</command-name>  "
+        ));
+    }
+
+    #[test]
+    fn test_is_system_metadata_nested_tags() {
+        let content = "<command-name>/help</command-name>\n<local-command-caveat>This is a local command</local-command-caveat>\n<local-command-stdout>Output here</local-command-stdout>";
+        assert!(is_system_metadata_content(content));
     }
 }

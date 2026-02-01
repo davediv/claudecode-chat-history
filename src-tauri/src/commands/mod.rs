@@ -8,7 +8,10 @@ use crate::models::{
     ContentBlockType, Conversation, ConversationFilters, ConversationSummary, Message, MessageRole,
     ProjectInfo, SubagentSummary, TokenCount,
 };
-use crate::parser::{parse_content_blocks, parse_conversation_file, ParserError, RawMessageType};
+use crate::parser::{
+    is_system_metadata_content, parse_content_blocks, parse_conversation_file, ParserError,
+    RawContent, RawMessageType,
+};
 use std::path::Path;
 use std::sync::Arc;
 use tauri::State;
@@ -255,11 +258,21 @@ pub fn get_conversation(
         .ok_or_else(|| CommandError::NotFound(format!("Conversation not found in file: {}", id)))?;
 
     // Convert RawMessages to Messages with parsed content blocks
+    // Filter out user messages that contain only system metadata (e.g., /clear command output)
     let messages: Vec<Message> = parsed
         .messages
         .iter()
         .enumerate()
-        .map(|(idx, raw)| {
+        .filter_map(|(idx, raw)| {
+            // Filter out user messages that contain only system metadata
+            if raw.message_type == RawMessageType::User {
+                if let RawContent::Text(text) = &raw.message.content {
+                    if is_system_metadata_content(text) {
+                        return None;
+                    }
+                }
+            }
+
             let role = match raw.message_type {
                 RawMessageType::User => MessageRole::User,
                 RawMessageType::Assistant => MessageRole::Assistant,
@@ -268,9 +281,14 @@ pub fn get_conversation(
 
             let content = parse_content_blocks(&raw.message.content);
 
+            // Filter out assistant messages with no displayable content
+            // (e.g., messages with only thinking blocks that were dropped during parsing)
+            if content.is_empty() && raw.message_type == RawMessageType::Assistant {
+                return None;
+            }
+
             // Check if this is a tool response (user message with only tool_result blocks)
             let is_tool_response = raw.message_type == RawMessageType::User
-                && !content.is_empty()
                 && content
                     .iter()
                     .all(|b| b.block_type == ContentBlockType::ToolResult);
@@ -280,14 +298,14 @@ pub fn get_conversation(
                 output: tc.output,
             });
 
-            Message {
+            Some(Message {
                 id: raw.uuid.clone().unwrap_or_else(|| format!("msg_{}", idx)),
                 role,
                 content,
                 timestamp: raw.timestamp.clone().unwrap_or_default(),
                 token_count,
                 is_tool_response,
-            }
+            })
         })
         .collect();
 
