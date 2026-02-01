@@ -21,6 +21,8 @@
     messageCount?: number;
     /** Whether this conversation is bookmarked */
     bookmarked?: boolean;
+    /** Number of subagent conversations */
+    subagentCount?: number;
     /** Whether this card is currently selected */
     isSelected?: boolean;
     /** Handler for card selection */
@@ -36,6 +38,7 @@
     lastTime,
     messageCount = 0,
     bookmarked = false,
+    subagentCount = 0,
     isSelected = false,
     onSelect,
     onToggleBookmark,
@@ -147,6 +150,21 @@
       </svg>
       {messageCount}
     </span>
+    {#if subagentCount > 0}
+      <span class="subagent-badge" title="{subagentCount} subagent{subagentCount !== 1 ? 's' : ''}">
+        <svg
+          class="subagent-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M6 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"></path>
+        </svg>
+        {subagentCount}
+      </span>
+    {/if}
     <button
       class="bookmark-button"
       class:bookmarked
@@ -255,6 +273,22 @@
   }
 
   .message-icon {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+
+  .subagent-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.6875rem;
+    color: var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+  }
+
+  .subagent-icon {
     width: 0.75rem;
     height: 0.75rem;
   }

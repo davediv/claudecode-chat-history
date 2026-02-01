@@ -30,6 +30,26 @@ export interface Message {
   content: ContentBlock[];
   timestamp: string; // ISO 8601 format
   tokenCount?: TokenCount;
+  /** True if this is a tool response (not actual user input) */
+  isToolResponse?: boolean;
+}
+
+/**
+ * Summary information for a subagent conversation.
+ */
+export interface SubagentSummary {
+  /** Unique conversation ID */
+  id: string;
+  /** Agent identifier (e.g., "agent-123") */
+  agentId: string;
+  /** First user message preview, truncated */
+  preview: string;
+  /** Total number of messages */
+  messageCount: number;
+  /** First message timestamp */
+  startTime: string; // ISO 8601 format
+  /** Last message timestamp */
+  lastTime: string; // ISO 8601 format
 }
 
 /**
@@ -55,6 +75,10 @@ export interface Conversation {
   bookmarked?: boolean;
   /** User-defined tags (MVP extension point) */
   tags?: string[];
+  /** Parent conversation ID (if this is a subagent conversation) */
+  parentId?: string;
+  /** Subagent conversations belonging to this parent conversation */
+  subagents?: SubagentSummary[];
 }
 
 /**
@@ -72,6 +96,8 @@ export interface ConversationSummary {
   messageCount: number;
   /** Whether this conversation is bookmarked */
   bookmarked: boolean;
+  /** Number of subagent conversations belonging to this conversation */
+  subagentCount: number;
 }
 
 /**

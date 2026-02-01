@@ -384,15 +384,41 @@ fn process_single_file(
             // Generate preview from first message content
             let preview = generate_preview(&conv.messages);
 
+            // For subagents, look up the parent conversation ID from the parent session ID
+            // The parent_session_id is the directory name of the parent, we need to find
+            // a conversation with that session_id in the file_path
+            let parent_conversation_id: Option<String> = if conv.is_subagent {
+                if let Some(parent_session) = conv.parent_session_id.as_ref() {
+                    // Find conversation where file_path ends with "{parent_session}.jsonl"
+                    // and is in the same project directory
+                    let expected_suffix = format!("{}.jsonl", parent_session);
+                    let result: Result<String, _> = tx.query_row(
+                        r#"
+                        SELECT id FROM conversations
+                        WHERE file_path LIKE ?1
+                        AND is_subagent = 0
+                        LIMIT 1
+                        "#,
+                        [format!("%/{}", expected_suffix)],
+                        |row| row.get(0),
+                    );
+                    result.ok()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // Insert or update conversation
             tx.execute(
                 r#"
                 INSERT INTO conversations (
                     id, project_path, project_name, start_time, last_time,
                     preview, message_count, total_input_tokens, total_output_tokens,
-                    file_path, file_modified_at
+                    file_path, file_modified_at, is_subagent, parent_conversation_id, agent_id
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ON CONFLICT(id) DO UPDATE SET
                     project_path = excluded.project_path,
                     project_name = excluded.project_name,
@@ -403,7 +429,10 @@ fn process_single_file(
                     total_input_tokens = excluded.total_input_tokens,
                     total_output_tokens = excluded.total_output_tokens,
                     file_path = excluded.file_path,
-                    file_modified_at = excluded.file_modified_at
+                    file_modified_at = excluded.file_modified_at,
+                    is_subagent = excluded.is_subagent,
+                    parent_conversation_id = excluded.parent_conversation_id,
+                    agent_id = excluded.agent_id
                 "#,
                 rusqlite::params![
                     conv.id,
@@ -417,6 +446,9 @@ fn process_single_file(
                     conv.total_output_tokens,
                     conv.file_path.to_string_lossy(),
                     modified_at,
+                    conv.is_subagent,
+                    parent_conversation_id,
+                    conv.agent_id,
                 ],
             )
             .map_err(crate::db::sqlite::DbError::Sqlite)?;
@@ -511,6 +543,7 @@ mod tests {
             token_count: None,
             uuid: None,
             session_id: None,
+            cwd: None,
         }];
 
         let preview = generate_preview(&messages);
@@ -532,6 +565,7 @@ mod tests {
             token_count: None,
             uuid: None,
             session_id: None,
+            cwd: None,
         }];
 
         let preview = generate_preview(&messages);
@@ -552,6 +586,7 @@ mod tests {
             token_count: None,
             uuid: None,
             session_id: None,
+            cwd: None,
         }];
 
         let preview = generate_preview(&messages);

@@ -108,6 +108,8 @@ pub struct RawMessage {
     pub uuid: Option<String>,
     /// Session ID this message belongs to.
     pub session_id: Option<String>,
+    /// Current working directory (project path) from the message.
+    pub cwd: Option<String>,
 }
 
 /// Parses a single JSONL line into a RawMessage.
@@ -188,6 +190,9 @@ pub fn parse_jsonl_line(line: &str) -> ParserResult<RawMessage> {
             .or_else(|| Some(RawTokenCount::default()))
     });
 
+    // Extract cwd (current working directory) - this contains the actual project path
+    let cwd = value.get("cwd").and_then(|v| v.as_str()).map(String::from);
+
     Ok(RawMessage {
         message_type,
         message: inner_message,
@@ -195,6 +200,7 @@ pub fn parse_jsonl_line(line: &str) -> ParserResult<RawMessage> {
         token_count,
         uuid,
         session_id,
+        cwd,
     })
 }
 
@@ -232,6 +238,17 @@ fn parse_inner_message(value: &Value) -> ParserResult<RawInnerMessage> {
     Ok(RawInnerMessage { content, role })
 }
 
+/// Information about a subagent detected from file path.
+#[derive(Debug, Clone, Default)]
+pub struct SubagentInfo {
+    /// Whether this is a subagent conversation.
+    pub is_subagent: bool,
+    /// Parent session ID (if this is a subagent).
+    pub parent_session_id: Option<String>,
+    /// Agent ID extracted from filename (e.g., "agent-123" from "agent-123.jsonl").
+    pub agent_id: Option<String>,
+}
+
 /// A parsed conversation aggregated from JSONL messages.
 /// Contains all messages grouped by session ID with calculated metadata.
 #[derive(Debug, Clone)]
@@ -256,6 +273,12 @@ pub struct ParsedConversation {
     pub session_id: String,
     /// Source file path.
     pub file_path: PathBuf,
+    /// Whether this is a subagent conversation.
+    pub is_subagent: bool,
+    /// Parent session ID (if this is a subagent).
+    pub parent_session_id: Option<String>,
+    /// Agent ID extracted from filename (if this is a subagent).
+    pub agent_id: Option<String>,
 }
 
 /// Parses a JSONL conversation file and groups messages by session ID.
@@ -284,8 +307,9 @@ pub fn parse_conversation_file(file_path: &Path) -> ParserResult<Vec<ParsedConve
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
 
-    // Group messages by session ID
+    // Group messages by session ID, also track cwd from messages
     let mut sessions: HashMap<String, Vec<RawMessage>> = HashMap::new();
+    let mut detected_cwd: Option<String> = None;
     let mut line_number = 0;
     let mut parse_errors = 0;
 
@@ -301,8 +325,18 @@ pub fn parse_conversation_file(file_path: &Path) -> ParserResult<Vec<ParsedConve
         };
 
         // Skip empty lines
-        if line.trim().is_empty() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
+        }
+
+        // Try to extract cwd from raw JSON before full parsing (cwd exists on many message types)
+        if detected_cwd.is_none() {
+            if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                if let Some(cwd) = value.get("cwd").and_then(|v| v.as_str()) {
+                    detected_cwd = Some(cwd.to_string());
+                }
+            }
         }
 
         // Parse the line
@@ -329,8 +363,11 @@ pub fn parse_conversation_file(file_path: &Path) -> ParserResult<Vec<ParsedConve
         );
     }
 
-    // Extract project info from file path
-    let (project_path, project_name) = extract_project_info(file_path);
+    // Detect if this is a subagent file
+    let subagent_info = detect_subagent_info(file_path);
+
+    // Extract project info - prefer cwd from messages, fallback to file path
+    let (project_path, project_name) = extract_project_info_with_cwd(file_path, &subagent_info, detected_cwd.as_deref());
 
     // Build conversations from sessions
     let mut conversations = Vec::new();
@@ -375,6 +412,9 @@ pub fn parse_conversation_file(file_path: &Path) -> ParserResult<Vec<ParsedConve
             total_output_tokens,
             session_id,
             file_path: file_path.to_path_buf(),
+            is_subagent: subagent_info.is_subagent,
+            parent_session_id: subagent_info.parent_session_id.clone(),
+            agent_id: subagent_info.agent_id.clone(),
         });
     }
 
@@ -389,25 +429,99 @@ pub fn parse_conversation_file(file_path: &Path) -> ParserResult<Vec<ParsedConve
     Ok(conversations)
 }
 
+/// Detects if a file is a subagent conversation based on its path.
+///
+/// Subagent files follow the pattern: `{session-id}/subagents/agent-{agent-id}.jsonl`
+/// Returns subagent info including parent session ID and agent ID.
+fn detect_subagent_info(file_path: &Path) -> SubagentInfo {
+    // Get the parent directory name
+    let parent = file_path.parent();
+    let parent_name = parent
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str());
+
+    // Check if parent directory is "subagents"
+    if parent_name != Some("subagents") {
+        return SubagentInfo::default();
+    }
+
+    // Get the grandparent directory (session ID directory)
+    let grandparent = parent.and_then(|p| p.parent());
+    let parent_session_id = grandparent
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
+
+    // Extract agent ID from filename (e.g., "agent-123.jsonl" -> "agent-123")
+    let agent_id = file_path
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
+
+    SubagentInfo {
+        is_subagent: true,
+        parent_session_id,
+        agent_id,
+    }
+}
+
+/// Extracts project path and name from a JSONL file path, optionally using cwd from message content.
+///
+/// The file path structure is: `~/.claude/projects/{project-hash}/{session}.jsonl`
+/// For subagents: `~/.claude/projects/{project-hash}/{session-id}/subagents/agent-{agent-id}.jsonl`
+///
+/// If `cwd` is provided (from message content), uses its last path component as the project name.
+/// This gives us the actual project folder name (e.g., "kpopquiz-backend") instead of the hash.
+fn extract_project_info_with_cwd(file_path: &Path, subagent_info: &SubagentInfo, cwd: Option<&str>) -> (String, String) {
+    // Get project directory path from file path
+    let project_dir = if subagent_info.is_subagent {
+        // For subagents, go up to the project hash directory (grandparent of "subagents")
+        // Path: {project-hash}/{session-id}/subagents/agent-{id}.jsonl
+        // We want: {project-hash}
+        file_path
+            .parent() // subagents dir
+            .and_then(|p| p.parent()) // session-id dir
+            .and_then(|p| p.parent()) // project-hash dir
+            .unwrap_or(Path::new(""))
+    } else {
+        // Standard case: get the parent directory (project hash directory)
+        file_path.parent().unwrap_or(Path::new(""))
+    };
+
+    let project_path = project_dir.to_string_lossy().to_string();
+
+    // Derive project name: prefer cwd from message content, fallback to directory name
+    let project_name = if let Some(cwd_path) = cwd {
+        // Extract the last component from cwd path (e.g., "/Users/div/Desktop/project/kpopquiz-backend" -> "kpopquiz-backend")
+        Path::new(cwd_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| {
+                // Fallback to directory name from file path
+                project_dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            })
+    } else {
+        // No cwd available, use directory name from file path
+        project_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    };
+
+    (project_path, project_name)
+}
+
 /// Extracts project path and name from a JSONL file path.
 ///
 /// The file path structure is: `~/.claude/projects/{project-hash}/{session}.jsonl`
+/// For subagents: `~/.claude/projects/{project-hash}/{session-id}/subagents/agent-{agent-id}.jsonl`
 /// The project path is the parent directory, and the project name is derived
 /// from the last 2 path segments before the hash.
-fn extract_project_info(file_path: &Path) -> (String, String) {
-    // Get the parent directory (project hash directory)
-    let project_dir = file_path.parent().unwrap_or(Path::new(""));
-    let project_path = project_dir.to_string_lossy().to_string();
-
-    // Try to get a meaningful project name from the path
-    // The structure is: ~/.claude/projects/{project-hash}
-    // The hash directory name is typically based on the original project path
-    let project_name = project_dir
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    (project_path, project_name)
+fn extract_project_info(file_path: &Path, subagent_info: &SubagentInfo) -> (String, String) {
+    extract_project_info_with_cwd(file_path, subagent_info, None)
 }
 
 /// Calculates total input and output tokens from a list of messages.
@@ -1133,7 +1247,8 @@ mod tests {
     #[test]
     fn test_extract_project_info() {
         let path = Path::new("/Users/test/.claude/projects/abc123-hash/session.jsonl");
-        let (project_path, project_name) = extract_project_info(path);
+        let subagent_info = SubagentInfo::default();
+        let (project_path, project_name) = extract_project_info(path, &subagent_info);
 
         assert_eq!(
             project_path,
@@ -1182,6 +1297,7 @@ mod tests {
                 }),
                 uuid: None,
                 session_id: None,
+                cwd: None,
             },
             RawMessage {
                 message_type: RawMessageType::Assistant,
@@ -1196,6 +1312,7 @@ mod tests {
                 }),
                 uuid: None,
                 session_id: None,
+                cwd: None,
             },
             RawMessage {
                 message_type: RawMessageType::User,
@@ -1207,6 +1324,7 @@ mod tests {
                 token_count: None, // No token count
                 uuid: None,
                 session_id: None,
+                cwd: None,
             },
         ];
 
@@ -1547,7 +1665,8 @@ mod tests {
     #[test]
     fn test_extract_project_info_root_path() {
         let path = Path::new("/session.jsonl");
-        let (project_path, project_name) = extract_project_info(path);
+        let subagent_info = SubagentInfo::default();
+        let (project_path, project_name) = extract_project_info(path, &subagent_info);
 
         // Should handle edge case of file at root
         // Parent of "/session.jsonl" is "/" which converts to "/" string
@@ -1559,7 +1678,8 @@ mod tests {
     #[test]
     fn test_extract_project_info_normal_path() {
         let path = Path::new("/Users/test/.claude/projects/my-project-hash/session-123.jsonl");
-        let (project_path, project_name) = extract_project_info(path);
+        let subagent_info = SubagentInfo::default();
+        let (project_path, project_name) = extract_project_info(path, &subagent_info);
 
         assert_eq!(project_path, "/Users/test/.claude/projects/my-project-hash");
         assert_eq!(project_name, "my-project-hash");
@@ -1586,6 +1706,7 @@ mod tests {
                 token_count: None,
                 uuid: None,
                 session_id: None,
+                cwd: None,
             },
         ];
         let (input, output) = calculate_total_tokens(&messages);

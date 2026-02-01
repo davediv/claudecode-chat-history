@@ -60,6 +60,7 @@ export const mockConversationSummaries: ConversationSummary[] = [
     preview: "Help me implement user authentication with JWT tokens",
     messageCount: 12,
     bookmarked: true,
+    subagentCount: 2,
   },
   {
     id: "conv-002",
@@ -69,6 +70,7 @@ export const mockConversationSummaries: ConversationSummary[] = [
     preview: "How do I add dark mode to my React application?",
     messageCount: 8,
     bookmarked: false,
+    subagentCount: 0,
   },
   {
     id: "conv-003",
@@ -78,6 +80,7 @@ export const mockConversationSummaries: ConversationSummary[] = [
     preview: "Fix the database connection timeout issue",
     messageCount: 6,
     bookmarked: false,
+    subagentCount: 1,
   },
   {
     id: "conv-004",
@@ -87,6 +90,7 @@ export const mockConversationSummaries: ConversationSummary[] = [
     preview: "Implement push notifications for iOS and Android",
     messageCount: 15,
     bookmarked: true,
+    subagentCount: 0,
   },
   {
     id: "conv-005",
@@ -96,6 +100,7 @@ export const mockConversationSummaries: ConversationSummary[] = [
     preview: "Optimize the webpack build configuration for production",
     messageCount: 4,
     bookmarked: false,
+    subagentCount: 0,
   },
 ];
 

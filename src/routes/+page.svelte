@@ -153,6 +153,7 @@
             onToggleBookmark={handleToggleBookmark}
             onTagsChange={handleTagsChange}
             allTags={tagsStore.allTags}
+            onSelectSubagent={handleSelectConversation}
           />
         {/if}
       </DetailPane>

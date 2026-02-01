@@ -26,9 +26,20 @@
     onTagsChange?: (id: string, tags: string[]) => void;
     /** All available tags for autocomplete */
     allTags?: TagInfo[];
+    /** Handler for navigating to a subagent conversation */
+    onSelectSubagent?: (id: string) => void;
   }
 
-  let { conversation, onBack, onToggleBookmark, onTagsChange, allTags = [] }: Props = $props();
+  let {
+    conversation,
+    onBack,
+    onToggleBookmark,
+    onTagsChange,
+    allTags = [],
+    onSelectSubagent,
+  }: Props = $props();
+
+  let subagentsExpanded = $state(false);
 
   function handleTagsChange(tags: string[]) {
     onTagsChange?.(conversation.id, tags);
@@ -133,6 +144,36 @@
       return "";
     }
   }
+
+  /**
+   * Format a short time string for subagent list.
+   */
+  function formatShortTime(isoString: string): string {
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return "";
+    }
+  }
+
+  function toggleSubagents() {
+    subagentsExpanded = !subagentsExpanded;
+  }
+
+  function handleSubagentClick(id: string) {
+    onSelectSubagent?.(id);
+  }
+
+  function handleSubagentKeydown(event: KeyboardEvent, id: string) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelectSubagent?.(id);
+    }
+  }
 </script>
 
 <div class="conversation-detail">
@@ -232,6 +273,56 @@
   <div class="tags-section">
     <TagInput tags={conversation.tags ?? []} {allTags} onTagsChange={handleTagsChange} />
   </div>
+
+  {#if conversation.subagents && conversation.subagents.length > 0}
+    <div class="subagents-section">
+      <button class="subagents-toggle" onclick={toggleSubagents} aria-expanded={subagentsExpanded}>
+        <svg
+          class="toggle-icon"
+          class:expanded={subagentsExpanded}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+        <svg
+          class="subagent-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M6 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"></path>
+        </svg>
+        <span class="subagents-label">
+          {conversation.subagents.length} subagent{conversation.subagents.length !== 1 ? "s" : ""}
+        </span>
+      </button>
+      {#if subagentsExpanded}
+        <div class="subagents-list">
+          {#each conversation.subagents as subagent (subagent.id)}
+            <div
+              class="subagent-item"
+              role="button"
+              tabindex="0"
+              onclick={() => handleSubagentClick(subagent.id)}
+              onkeydown={(e) => handleSubagentKeydown(e, subagent.id)}
+            >
+              <div class="subagent-header">
+                <span class="subagent-id">{subagent.agentId}</span>
+                <span class="subagent-time">{formatShortTime(subagent.startTime)}</span>
+              </div>
+              <p class="subagent-preview">{subagent.preview || "No preview"}</p>
+              <span class="subagent-meta">{subagent.messageCount} messages</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <div class="messages-container">
     {#each conversation.messages as message (message.id)}
@@ -335,6 +426,118 @@
     flex-shrink: 0;
   }
 
+  .subagents-section {
+    background-color: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+
+  .subagents-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem 1rem;
+    background: none;
+    border: none;
+    color: var(--color-accent);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    transition: background-color 0.15s ease;
+  }
+
+  .subagents-toggle:hover {
+    background-color: var(--color-bg-tertiary);
+  }
+
+  .subagents-toggle:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+
+  .toggle-icon {
+    width: 1rem;
+    height: 1rem;
+    transition: transform 0.15s ease;
+  }
+
+  .toggle-icon.expanded {
+    transform: rotate(90deg);
+  }
+
+  .subagent-icon {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .subagents-label {
+    flex: 1;
+  }
+
+  .subagents-list {
+    padding: 0 1rem 0.5rem 2.5rem;
+  }
+
+  .subagent-item {
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.25rem;
+    background-color: var(--color-bg-tertiary);
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    outline: none;
+  }
+
+  .subagent-item:hover {
+    background-color: color-mix(in srgb, var(--color-bg-tertiary) 80%, var(--color-accent) 20%);
+  }
+
+  .subagent-item:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+
+  .subagent-item:last-child {
+    margin-bottom: 0;
+  }
+
+  .subagent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.25rem;
+  }
+
+  .subagent-id {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-accent);
+  }
+
+  .subagent-time {
+    font-size: 0.6875rem;
+    color: var(--color-text-muted);
+  }
+
+  .subagent-preview {
+    margin: 0 0 0.25rem 0;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .subagent-meta {
+    font-size: 0.6875rem;
+    color: var(--color-text-muted);
+  }
+
   .messages-container {
     flex: 1;
     overflow-y: auto;
@@ -422,6 +625,15 @@
 
     .action-icon.spin {
       animation: none;
+    }
+
+    .toggle-icon {
+      transition: none;
+    }
+
+    .subagents-toggle,
+    .subagent-item {
+      transition: none;
     }
   }
 </style>

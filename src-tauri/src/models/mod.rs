@@ -61,6 +61,10 @@ pub struct Message {
     /// Token count for this message (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_count: Option<TokenCount>,
+    /// True if this is a user message containing only tool_result blocks.
+    /// These are system responses to tool calls, not actual user input.
+    #[serde(default)]
+    pub is_tool_response: bool,
 }
 
 /// A complete conversation with all messages.
@@ -88,6 +92,30 @@ pub struct Conversation {
     /// User-defined tags (MVP extension point).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Parent conversation ID (if this is a subagent conversation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Subagent conversations belonging to this parent conversation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<Vec<SubagentSummary>>,
+}
+
+/// Summary information for a subagent conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentSummary {
+    /// Unique conversation ID.
+    pub id: String,
+    /// Agent identifier (e.g., "agent-123").
+    pub agent_id: String,
+    /// First user message preview, truncated.
+    pub preview: String,
+    /// Total number of messages.
+    pub message_count: i32,
+    /// First message timestamp (ISO 8601).
+    pub start_time: String,
+    /// Last message timestamp (ISO 8601).
+    pub last_time: String,
 }
 
 /// Lightweight conversation summary for list view.
@@ -108,6 +136,9 @@ pub struct ConversationSummary {
     /// Whether this conversation is bookmarked.
     #[serde(default)]
     pub bookmarked: bool,
+    /// Number of subagent conversations belonging to this conversation.
+    #[serde(default)]
+    pub subagent_count: i32,
 }
 
 /// Filter options for querying conversations.
@@ -202,16 +233,19 @@ mod tests {
             preview: "How do I...".to_string(),
             message_count: 10,
             bookmarked: true,
+            subagent_count: 3,
         };
 
         let json = serde_json::to_string(&summary).unwrap();
         assert!(json.contains("\"projectName\":\"my-project\""));
         assert!(json.contains("\"messageCount\":10"));
         assert!(json.contains("\"bookmarked\":true"));
+        assert!(json.contains("\"subagentCount\":3"));
 
         let deserialized: ConversationSummary = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "abc123");
         assert!(deserialized.bookmarked);
+        assert_eq!(deserialized.subagent_count, 3);
     }
 
     #[test]

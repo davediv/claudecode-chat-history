@@ -26,6 +26,19 @@
     message.content && Array.isArray(message.content) && message.content.length > 0
   );
 
+  // Role display label - tool responses show "Tool Result" instead of "You"
+  const roleLabel = $derived(
+    message.isToolResponse
+      ? "Tool Result"
+      : message.role === "user"
+        ? "You"
+        : message.role === "assistant"
+          ? "Claude"
+          : message.role === "system"
+            ? "System"
+            : message.role
+  );
+
   /**
    * Format message timestamp for display.
    */
@@ -39,22 +52,6 @@
       });
     } catch {
       return "";
-    }
-  }
-
-  /**
-   * Get role display label.
-   */
-  function getRoleLabel(role: Message["role"]): string {
-    switch (role) {
-      case "user":
-        return "You";
-      case "assistant":
-        return "Claude";
-      case "system":
-        return "System";
-      default:
-        return role;
     }
   }
 
@@ -84,9 +81,12 @@
   }
 </script>
 
-<article class="message message-{message.role}" aria-label="{getRoleLabel(message.role)} message">
+<article
+  class="message {message.isToolResponse ? 'message-tool-response' : `message-${message.role}`}"
+  aria-label="{roleLabel} message"
+>
   <div class="message-header">
-    <span class="message-role">{getRoleLabel(message.role)}</span>
+    <span class="message-role">{roleLabel}</span>
     {#if showTimestamp}
       <span class="message-time">{formatTime(message.timestamp)}</span>
     {/if}
@@ -166,7 +166,8 @@
     color: rgba(255, 255, 255, 0.8);
   }
 
-  .message-assistant {
+  .message-assistant,
+  .message-tool-response {
     background-color: var(--color-bg-tertiary);
     color: var(--color-text-primary);
   }
@@ -180,6 +181,10 @@
     text-align: center;
     color: var(--color-text-muted);
     font-size: 0.8125rem;
+  }
+
+  .message-tool-response .message-role {
+    color: var(--color-text-muted);
   }
 
   .message-header {

@@ -278,11 +278,15 @@ mod tests {
                 token_count: Some(RawTokenCount::default()),
                 uuid: Some("test-uuid".to_string()),
                 session_id: Some("test-session".to_string()),
+                cwd: None,
             }],
             total_input_tokens: 100,
             total_output_tokens: 200,
             session_id: "test-session".to_string(),
             file_path: PathBuf::from("/test/session.jsonl"),
+            is_subagent: false,
+            parent_session_id: None,
+            agent_id: None,
         }
     }
 
@@ -1358,6 +1362,9 @@ mod tests {
             total_output_tokens: 0,
             session_id: "test-session".to_string(),
             file_path: PathBuf::from("/test/session.jsonl"),
+            is_subagent: false,
+            parent_session_id: None,
+            agent_id: None,
         };
 
         // Should handle empty content gracefully

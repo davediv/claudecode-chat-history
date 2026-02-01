@@ -89,8 +89,10 @@ impl AppState {
             let mut stmt = conn.prepare(
                 r#"
                 SELECT c.id, c.project_name, c.start_time, c.last_time, c.preview, c.message_count,
-                       (SELECT 1 FROM bookmarks b WHERE b.conversation_id = c.id) IS NOT NULL as bookmarked
+                       (SELECT 1 FROM bookmarks b WHERE b.conversation_id = c.id) IS NOT NULL as bookmarked,
+                       (SELECT COUNT(*) FROM conversations sub WHERE sub.parent_conversation_id = c.id) as subagent_count
                 FROM conversations c
+                WHERE c.is_subagent = 0
                 ORDER BY c.last_time DESC
                 "#,
             )?;
@@ -104,6 +106,7 @@ impl AppState {
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
                     bookmarked: row.get::<_, i32>(6)? != 0,
+                    subagent_count: row.get(7)?,
                 })
             })?;
 
@@ -175,6 +178,7 @@ mod tests {
                 preview: "Hello world".to_string(),
                 message_count: 5,
                 bookmarked: false,
+                subagent_count: 0,
             },
             ConversationSummary {
                 id: "conv2".to_string(),
@@ -184,6 +188,7 @@ mod tests {
                 preview: "Another conversation".to_string(),
                 message_count: 10,
                 bookmarked: true,
+                subagent_count: 2,
             },
         ];
 
@@ -210,6 +215,7 @@ mod tests {
             preview: "Test".to_string(),
             message_count: 1,
             bookmarked: false,
+            subagent_count: 0,
         }];
 
         state.set_cached_conversations(conversations);

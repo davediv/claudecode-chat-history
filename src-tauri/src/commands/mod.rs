@@ -5,8 +5,8 @@
 
 use crate::db::sqlite::{Database, DbError};
 use crate::models::{
-    Conversation, ConversationFilters, ConversationSummary, Message, MessageRole, ProjectInfo,
-    TokenCount,
+    ContentBlockType, Conversation, ConversationFilters, ConversationSummary, Message, MessageRole,
+    ProjectInfo, SubagentSummary, TokenCount,
 };
 use crate::parser::{parse_content_blocks, parse_conversation_file, ParserError, RawMessageType};
 use std::path::Path;
@@ -88,13 +88,15 @@ pub fn get_conversations(
     db.with_connection(|conn| {
         // Build query with optional filters
         // LEFT JOIN bookmarks to get bookmark status
+        // Subquery to count subagents for each parent conversation
         let mut sql = String::from(
             r#"
             SELECT c.id, c.project_name, c.start_time, c.last_time, c.preview, c.message_count,
-                   CASE WHEN b.conversation_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked
+                   CASE WHEN b.conversation_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked,
+                   (SELECT COUNT(*) FROM conversations sub WHERE sub.parent_conversation_id = c.id) as subagent_count
             FROM conversations c
             LEFT JOIN bookmarks b ON c.id = b.conversation_id
-            WHERE 1=1
+            WHERE c.is_subagent = 0
             "#,
         );
 
@@ -158,6 +160,7 @@ pub fn get_conversations(
                 preview: row.get(4)?,
                 message_count: row.get(5)?,
                 bookmarked: row.get::<_, i32>(6)? != 0,
+                subagent_count: row.get(7)?,
             })
         })?;
 
@@ -201,7 +204,8 @@ pub fn get_conversation(
             r#"
             SELECT c.id, c.project_path, c.project_name, c.start_time, c.last_time, c.file_path,
                    c.total_input_tokens, c.total_output_tokens,
-                   CASE WHEN b.conversation_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked
+                   CASE WHEN b.conversation_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked,
+                   c.parent_conversation_id
             FROM conversations c
             LEFT JOIN bookmarks b ON c.id = b.conversation_id
             WHERE c.id = ?1
@@ -219,6 +223,7 @@ pub fn get_conversation(
                 total_input_tokens: row.get(6)?,
                 total_output_tokens: row.get(7)?,
                 bookmarked: row.get::<_, i32>(8)? != 0,
+                parent_conversation_id: row.get(9)?,
             })
         });
 
@@ -263,6 +268,13 @@ pub fn get_conversation(
 
             let content = parse_content_blocks(&raw.message.content);
 
+            // Check if this is a tool response (user message with only tool_result blocks)
+            let is_tool_response = raw.message_type == RawMessageType::User
+                && !content.is_empty()
+                && content
+                    .iter()
+                    .all(|b| b.block_type == ContentBlockType::ToolResult);
+
             let token_count = raw.token_count.as_ref().map(|tc| TokenCount {
                 input: tc.input,
                 output: tc.output,
@@ -274,6 +286,7 @@ pub fn get_conversation(
                 content,
                 timestamp: raw.timestamp.clone().unwrap_or_default(),
                 token_count,
+                is_tool_response,
             }
         })
         .collect();
@@ -297,6 +310,33 @@ pub fn get_conversation(
         Ok(tags_vec)
     })?;
 
+    // Fetch subagent summaries for this conversation
+    let subagents = db.with_connection(|conn| {
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, agent_id, preview, message_count, start_time, last_time
+            FROM conversations
+            WHERE parent_conversation_id = ?1
+            ORDER BY start_time ASC
+            "#
+        )?;
+        let rows = stmt.query_map([&id], |row| {
+            Ok(SubagentSummary {
+                id: row.get(0)?,
+                agent_id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                preview: row.get(2)?,
+                message_count: row.get(3)?,
+                start_time: row.get(4)?,
+                last_time: row.get(5)?,
+            })
+        })?;
+        let mut subagents_vec = Vec::new();
+        for row_result in rows {
+            subagents_vec.push(row_result?);
+        }
+        Ok(subagents_vec)
+    })?;
+
     Ok(Conversation {
         id: metadata.id,
         project_path: metadata.project_path,
@@ -310,6 +350,8 @@ pub fn get_conversation(
         },
         bookmarked: Some(metadata.bookmarked),
         tags: if tags.is_empty() { None } else { Some(tags) },
+        parent_id: metadata.parent_conversation_id,
+        subagents: if subagents.is_empty() { None } else { Some(subagents) },
     })
 }
 
@@ -329,6 +371,7 @@ pub fn get_projects(db: State<'_, Arc<Database>>) -> Result<Vec<ProjectInfo>, Co
             r#"
             SELECT project_path, project_name, COUNT(*) as conversation_count, MAX(last_time) as last_activity
             FROM conversations
+            WHERE is_subagent = 0
             GROUP BY project_path, project_name
             ORDER BY project_name ASC
             "#,
@@ -387,6 +430,7 @@ pub fn search_conversations(
         // bm25() provides relevance ranking
         // Note: snippet() returns NULL for external content FTS tables (content=''),
         // so we use COALESCE to fall back to the conversation preview
+        // Filter out subagents from search results
         let mut sql = String::from(
             r#"
             SELECT
@@ -396,6 +440,7 @@ pub fn search_conversations(
             FROM conversations_fts
             INNER JOIN conversations c ON conversations_fts.rowid = c.rowid
             WHERE conversations_fts MATCH ?1
+            AND c.is_subagent = 0
             "#,
         );
 
@@ -538,6 +583,7 @@ struct ConversationMetadata {
     total_input_tokens: i64,
     total_output_tokens: i64,
     bookmarked: bool,
+    parent_conversation_id: Option<String>,
 }
 
 /// Sets the tags for a conversation (replaces all existing tags).
@@ -657,7 +703,7 @@ mod tests {
 
         let result = db.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations ORDER BY last_time DESC LIMIT 100 OFFSET 0"
+                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations WHERE is_subagent = 0 ORDER BY last_time DESC LIMIT 100 OFFSET 0"
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok(ConversationSummary {
@@ -668,6 +714,7 @@ mod tests {
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
                     bookmarked: false,
+                    subagent_count: 0,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -692,7 +739,7 @@ mod tests {
         // Query all
         let result = db.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations ORDER BY last_time DESC"
+                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations WHERE is_subagent = 0 ORDER BY last_time DESC"
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok(ConversationSummary {
@@ -703,6 +750,7 @@ mod tests {
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
                     bookmarked: false,
+                    subagent_count: 0,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -731,7 +779,7 @@ mod tests {
         // Query with project filter
         let result = db.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations WHERE project_name = ? ORDER BY last_time DESC"
+                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations WHERE project_name = ? AND is_subagent = 0 ORDER BY last_time DESC"
             )?;
             let rows = stmt.query_map(["project-a"], |row| {
                 Ok(ConversationSummary {
@@ -742,6 +790,7 @@ mod tests {
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
                     bookmarked: false,
+                    subagent_count: 0,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -767,7 +816,7 @@ mod tests {
         // Query with date range filter
         let result = db.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations WHERE last_time >= ? AND last_time <= ? ORDER BY last_time DESC"
+                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations WHERE last_time >= ? AND last_time <= ? AND is_subagent = 0 ORDER BY last_time DESC"
             )?;
             let rows = stmt.query_map(["2025-01-12T00:00:00Z", "2025-01-18T00:00:00Z"], |row| {
                 Ok(ConversationSummary {
@@ -778,6 +827,7 @@ mod tests {
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
                     bookmarked: false,
+                    subagent_count: 0,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -808,7 +858,7 @@ mod tests {
         // Query with pagination
         let result = db.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations ORDER BY last_time DESC LIMIT 3 OFFSET 2"
+                "SELECT id, project_name, start_time, last_time, preview, message_count FROM conversations WHERE is_subagent = 0 ORDER BY last_time DESC LIMIT 3 OFFSET 2"
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok(ConversationSummary {
@@ -819,6 +869,7 @@ mod tests {
                     preview: row.get(4)?,
                     message_count: row.get(5)?,
                     bookmarked: false,
+                    subagent_count: 0,
                 })
             })?;
             let results: Vec<ConversationSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -896,6 +947,7 @@ mod tests {
                     total_input_tokens: row.get(6)?,
                     total_output_tokens: row.get(7)?,
                     bookmarked: false,
+                    parent_conversation_id: None,
                 })
             });
 
@@ -926,6 +978,7 @@ mod tests {
             total_input_tokens: 100,
             total_output_tokens: 200,
             bookmarked: false,
+            parent_conversation_id: None,
         };
 
         assert_eq!(metadata.id, "test-123");

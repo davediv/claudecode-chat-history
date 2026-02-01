@@ -16,6 +16,7 @@
     lastTime: string;
     messageCount: number;
     bookmarked: boolean;
+    subagentCount: number;
   }
 
   interface Props {

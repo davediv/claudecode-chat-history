@@ -158,7 +158,10 @@ pub fn init_db(conn: &Connection) -> DbResult<()> {
             total_input_tokens INTEGER NOT NULL DEFAULT 0,
             total_output_tokens INTEGER NOT NULL DEFAULT 0,
             file_path TEXT NOT NULL,
-            file_modified_at TEXT NOT NULL
+            file_modified_at TEXT NOT NULL,
+            is_subagent INTEGER NOT NULL DEFAULT 0,
+            parent_conversation_id TEXT,
+            agent_id TEXT
         );
 
         -- Indexes for common queries
@@ -170,8 +173,15 @@ pub fn init_db(conn: &Connection) -> DbResult<()> {
             ON conversations(last_time);
         CREATE INDEX IF NOT EXISTS idx_conversations_file_path
             ON conversations(file_path);
+        CREATE INDEX IF NOT EXISTS idx_conversations_is_subagent
+            ON conversations(is_subagent);
+        CREATE INDEX IF NOT EXISTS idx_conversations_parent_id
+            ON conversations(parent_conversation_id);
         "#,
     )?;
+
+    // Migration: add subagent columns if they don't exist (for existing databases)
+    migrate_add_subagent_columns(conn)?;
 
     // Create file metadata table for incremental parsing
     conn.execute_batch(
@@ -233,6 +243,37 @@ pub fn init_db(conn: &Connection) -> DbResult<()> {
     )?;
 
     info!("Database schema initialized successfully");
+    Ok(())
+}
+
+/// Migrates existing database to add subagent columns if they don't exist.
+///
+/// This is safe to call multiple times - it checks if columns exist before adding.
+fn migrate_add_subagent_columns(conn: &Connection) -> DbResult<()> {
+    // Check if is_subagent column exists
+    let has_is_subagent: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'is_subagent'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+
+    if !has_is_subagent {
+        info!("Migrating database: adding subagent columns");
+        conn.execute_batch(
+            r#"
+            ALTER TABLE conversations ADD COLUMN is_subagent INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT;
+            ALTER TABLE conversations ADD COLUMN agent_id TEXT;
+            CREATE INDEX IF NOT EXISTS idx_conversations_is_subagent ON conversations(is_subagent);
+            CREATE INDEX IF NOT EXISTS idx_conversations_parent_id ON conversations(parent_conversation_id);
+            "#,
+        )?;
+        info!("Migration complete: subagent columns added");
+    }
+
     Ok(())
 }
 

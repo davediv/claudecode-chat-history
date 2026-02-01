@@ -19,6 +19,7 @@
     lastTime: string;
     messageCount: number;
     bookmarked: boolean;
+    subagentCount: number;
   }
 
   interface Props {
@@ -182,6 +183,7 @@
           lastTime={item.lastTime}
           messageCount={item.messageCount}
           bookmarked={item.bookmarked}
+          subagentCount={item.subagentCount}
           isSelected={selectedId === item.id || focusedIndex === index}
           onSelect={handleSelect}
           {onToggleBookmark}
