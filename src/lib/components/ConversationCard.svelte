@@ -29,6 +29,8 @@
     onSelect?: (id: string) => void;
     /** Handler for bookmark toggle */
     onToggleBookmark?: (id: string) => void;
+    /** Whether to hide the project name (used in grouped view where header shows it) */
+    hideProjectName?: boolean;
   }
 
   let {
@@ -42,6 +44,7 @@
     isSelected = false,
     onSelect,
     onToggleBookmark,
+    hideProjectName = false,
   }: Props = $props();
 
   // Display values with fallbacks for missing data
@@ -129,7 +132,9 @@
   onkeydown={handleKeydown}
 >
   <div class="card-header">
-    <span class="project-name" title={displayProjectName}>{displayProjectName}</span>
+    {#if !hideProjectName}
+      <span class="project-name" title={displayProjectName}>{displayProjectName}</span>
+    {/if}
     <span class="timestamp">{lastTime ? formatRelativeDate(lastTime) : "Unknown date"}</span>
   </div>
 
