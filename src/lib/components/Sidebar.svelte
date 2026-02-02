@@ -4,24 +4,17 @@
    *
    * Features:
    * - Fixed width sidebar container
-   * - Contains ConversationList with virtual scrolling
+   * - Contains ConversationList or GroupedConversationList
+   * - Supports flat and grouped view modes
    * - Responsive: hidden on narrow screens
    */
   import ConversationList from "./ConversationList.svelte";
-
-  interface ConversationItem {
-    id: string;
-    projectName: string;
-    preview: string;
-    lastTime: string;
-    messageCount: number;
-    bookmarked: boolean;
-    subagentCount: number;
-  }
+  import GroupedConversationList from "./GroupedConversationList.svelte";
+  import type { ConversationSummary } from "$lib/types";
 
   interface Props {
     /** List of conversations to display */
-    conversations?: ConversationItem[];
+    conversations?: ConversationSummary[];
     /** Currently selected conversation ID */
     selectedId?: string | null;
     /** Handler for conversation selection */
@@ -32,6 +25,8 @@
     isLoading?: boolean;
     /** Reference to the conversation list element (bindable) */
     listRef?: HTMLElement;
+    /** Whether to use grouped view (true) or flat view (false) */
+    groupedView?: boolean;
   }
 
   let {
@@ -41,18 +36,30 @@
     onToggleBookmark,
     isLoading = false,
     listRef = $bindable(),
+    groupedView = true,
   }: Props = $props();
 </script>
 
 <aside class="sidebar" aria-label="Conversation list">
-  <ConversationList
-    {conversations}
-    {selectedId}
-    {onSelect}
-    {onToggleBookmark}
-    {isLoading}
-    bind:listRef
-  />
+  {#if groupedView}
+    <GroupedConversationList
+      {conversations}
+      {selectedId}
+      {onSelect}
+      {onToggleBookmark}
+      {isLoading}
+      bind:listRef
+    />
+  {:else}
+    <ConversationList
+      {conversations}
+      {selectedId}
+      {onSelect}
+      {onToggleBookmark}
+      {isLoading}
+      bind:listRef
+    />
+  {/if}
 </aside>
 
 <style>

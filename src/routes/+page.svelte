@@ -21,7 +21,7 @@
   import ToastContainer from "$lib/components/ToastContainer.svelte";
   import AnalyticsModal from "$lib/components/AnalyticsModal.svelte";
   import { ErrorBoundary, FilterPills } from "$lib/components";
-  import { conversationsStore, tagsStore, uiStore } from "$lib/stores";
+  import { conversationsStore, tagsStore, uiStore, groupedViewStore } from "$lib/stores";
   import { setTags as setTagsService } from "$lib/services/tauri";
 
   // Local loading state for detail pane (store handles list loading)
@@ -141,6 +141,7 @@
         onToggleBookmark={handleToggleBookmark}
         isLoading={conversationsStore.loading}
         bind:listRef={conversationListRef}
+        groupedView={groupedViewStore.groupedViewEnabled}
       />
     </ErrorBoundary>
 
