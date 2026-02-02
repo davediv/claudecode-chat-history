@@ -166,3 +166,39 @@ export interface ConversationsUpdatedEvent {
   /** Whether this was triggered by file watcher (vs initial load) */
   fromWatcher: boolean;
 }
+
+// ============================================================================
+// Grouped View Types
+// ============================================================================
+
+/**
+ * A project header item in the grouped conversation list.
+ * Represents a collapsible section containing all conversations for a project.
+ */
+export interface ProjectGroupHeader {
+  type: "project-header";
+  /** Project name (unique identifier for the group) */
+  projectName: string;
+  /** Number of conversations in this project */
+  conversationCount: number;
+  /** Most recent activity timestamp (ISO 8601) */
+  lastActivity: string;
+  /** Whether this project section is expanded */
+  isExpanded: boolean;
+}
+
+/**
+ * A conversation item in the grouped conversation list.
+ * Wraps ConversationSummary with type discriminator for the virtual list.
+ */
+export interface ConversationListItem {
+  type: "conversation";
+  /** The conversation summary data */
+  conversation: ConversationSummary;
+}
+
+/**
+ * Union type for items in the grouped conversation list.
+ * The virtual list renders either project headers or conversation cards.
+ */
+export type GroupedListItem = ProjectGroupHeader | ConversationListItem;
