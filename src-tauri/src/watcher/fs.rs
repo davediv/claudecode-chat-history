@@ -5,7 +5,11 @@
 
 use crate::db::metadata::{get_modified_files, update_file_metadata};
 use crate::db::sqlite::Database;
-use crate::parser::jsonl::{discover_jsonl_files, get_claude_projects_dir, parse_conversation_file};
+use crate::parser::jsonl::{
+    discover_jsonl_files, get_claude_projects_dir, parse_conversation_file, RawContent,
+    RawMessage, RawMessageType,
+};
+use crate::parser::{is_system_metadata_content, parse_content_blocks};
 use crate::search::index::index_conversation_content;
 use crate::state::AppState;
 use notify::{
@@ -441,7 +445,7 @@ fn process_single_file(
                     conv.start_time,
                     conv.last_time,
                     preview,
-                    conv.messages.len(),
+                    count_displayable_messages(&conv.messages),
                     conv.total_input_tokens,
                     conv.total_output_tokens,
                     conv.file_path.to_string_lossy(),
@@ -504,9 +508,43 @@ fn extract_preview_from_content(content: &crate::parser::jsonl::RawContent) -> O
     }
 }
 
+/// Counts the number of displayable messages in a conversation.
+///
+/// This applies the same filtering logic as `get_conversation` in `commands/mod.rs`:
+/// - Filters out user messages that contain only system metadata
+/// - Filters out assistant messages with empty content after parsing
+///
+/// This ensures the message count shown in the sidebar matches what will
+/// actually be displayed in the conversation detail view.
+fn count_displayable_messages(messages: &[RawMessage]) -> i32 {
+    messages
+        .iter()
+        .filter(|raw| {
+            // Filter out user messages that contain only system metadata
+            if raw.message_type == RawMessageType::User {
+                if let RawContent::Text(text) = &raw.message.content {
+                    if is_system_metadata_content(text) {
+                        return false;
+                    }
+                }
+            }
+
+            // Parse content blocks to check if there's displayable content
+            let content = parse_content_blocks(&raw.message.content);
+
+            // Filter out assistant messages with no displayable content
+            if content.is_empty() && raw.message_type == RawMessageType::Assistant {
+                return false;
+            }
+
+            true
+        })
+        .count() as i32
+}
+
 /// Generates a preview string from conversation messages.
 /// Filters out system metadata XML tags from previews.
-fn generate_preview(messages: &[crate::parser::jsonl::RawMessage]) -> String {
+fn generate_preview(messages: &[RawMessage]) -> String {
     // Find first user message for preview
     for msg in messages {
         if let crate::parser::jsonl::RawMessageType::User = msg.message_type {
@@ -695,5 +733,136 @@ mod tests {
 
         let preview = generate_preview(&messages);
         assert!(preview.is_empty());
+    }
+
+    // ========== count_displayable_messages tests ==========
+
+    #[test]
+    fn test_count_displayable_messages_normal() {
+        use crate::parser::jsonl::{RawContent, RawInnerMessage, RawMessage, RawMessageType};
+
+        let messages = vec![
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("Hello, world!".to_string()),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+            RawMessage {
+                message_type: RawMessageType::Assistant,
+                message: RawInnerMessage {
+                    content: RawContent::Text("Hi there!".to_string()),
+                    role: Some("assistant".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+        ];
+
+        assert_eq!(count_displayable_messages(&messages), 2);
+    }
+
+    #[test]
+    fn test_count_displayable_messages_filters_system_metadata() {
+        use crate::parser::jsonl::{RawContent, RawInnerMessage, RawMessage, RawMessageType};
+
+        let messages = vec![
+            // System metadata - should NOT be counted
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("<command-name>/clear</command-name>".to_string()),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+            // Real user message - should be counted
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("Hello!".to_string()),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+            // System metadata - should NOT be counted
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text(
+                        "<local-command-caveat>Caveat text</local-command-caveat>".to_string(),
+                    ),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+        ];
+
+        // Only the "Hello!" message should be counted
+        assert_eq!(count_displayable_messages(&messages), 1);
+    }
+
+    #[test]
+    fn test_count_displayable_messages_all_system_metadata() {
+        use crate::parser::jsonl::{RawContent, RawInnerMessage, RawMessage, RawMessageType};
+
+        let messages = vec![
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("<command-name>/clear</command-name>".to_string()),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text(
+                        "<local-command-stdout></local-command-stdout>".to_string(),
+                    ),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+        ];
+
+        // No messages should be counted
+        assert_eq!(count_displayable_messages(&messages), 0);
+    }
+
+    #[test]
+    fn test_count_displayable_messages_empty() {
+        let messages: Vec<RawMessage> = vec![];
+        assert_eq!(count_displayable_messages(&messages), 0);
     }
 }
