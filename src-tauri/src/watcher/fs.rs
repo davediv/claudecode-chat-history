@@ -471,49 +471,55 @@ fn process_single_file(
     Ok(count)
 }
 
-/// Generates a preview string from conversation messages.
-fn generate_preview(messages: &[crate::parser::jsonl::RawMessage]) -> String {
+/// Attempts to extract a clean preview from text, filtering out system metadata.
+/// Returns `None` if the text is only system metadata or empty after cleaning.
+fn extract_text_preview(text: &str) -> Option<String> {
+    use crate::parser::content::{is_system_metadata_content, strip_system_metadata_tags};
+
+    if is_system_metadata_content(text) {
+        return None;
+    }
+
+    let cleaned = strip_system_metadata_tags(text);
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    let preview = cleaned.chars().take(200).collect::<String>();
+    Some(preview.replace('\n', " ").trim().to_string())
+}
+
+/// Attempts to extract a preview from content (Text or Blocks).
+/// Returns `None` if no valid preview text is found.
+fn extract_preview_from_content(content: &crate::parser::jsonl::RawContent) -> Option<String> {
     use crate::parser::jsonl::RawContent;
 
+    match content {
+        RawContent::Text(text) => extract_text_preview(text),
+        RawContent::Blocks(blocks) => blocks
+            .iter()
+            .filter(|b| b.block_type == "text")
+            .filter_map(|b| b.text.as_ref())
+            .find_map(|text| extract_text_preview(text)),
+    }
+}
+
+/// Generates a preview string from conversation messages.
+/// Filters out system metadata XML tags from previews.
+fn generate_preview(messages: &[crate::parser::jsonl::RawMessage]) -> String {
     // Find first user message for preview
     for msg in messages {
         if let crate::parser::jsonl::RawMessageType::User = msg.message_type {
-            match &msg.message.content {
-                RawContent::Text(text) => {
-                    // Truncate to reasonable preview length
-                    let preview = text.chars().take(200).collect::<String>();
-                    return preview.replace('\n', " ").trim().to_string();
-                }
-                RawContent::Blocks(blocks) => {
-                    // Get text from first text block
-                    for block in blocks {
-                        if block.block_type == "text" {
-                            if let Some(text) = &block.text {
-                                let preview = text.chars().take(200).collect::<String>();
-                                return preview.replace('\n', " ").trim().to_string();
-                            }
-                        }
-                    }
-                }
+            if let Some(preview) = extract_preview_from_content(&msg.message.content) {
+                return preview;
             }
         }
     }
 
     // Fallback to first message of any type
     if let Some(first) = messages.first() {
-        match &first.message.content {
-            RawContent::Text(text) => {
-                let preview = text.chars().take(200).collect::<String>();
-                return preview.replace('\n', " ").trim().to_string();
-            }
-            RawContent::Blocks(blocks) => {
-                for block in blocks {
-                    if let Some(text) = &block.text {
-                        let preview = text.chars().take(200).collect::<String>();
-                        return preview.replace('\n', " ").trim().to_string();
-                    }
-                }
-            }
+        if let Some(preview) = extract_preview_from_content(&first.message.content) {
+            return preview;
         }
     }
 
@@ -597,6 +603,96 @@ mod tests {
     #[test]
     fn test_generate_preview_empty_messages() {
         let messages: Vec<crate::parser::jsonl::RawMessage> = vec![];
+        let preview = generate_preview(&messages);
+        assert!(preview.is_empty());
+    }
+
+    // ========== System metadata filtering integration tests ==========
+    // Note: Unit tests for strip_system_metadata_tags are in parser/content.rs
+
+    #[test]
+    fn test_generate_preview_skips_system_metadata_messages() {
+        use crate::parser::jsonl::{RawContent, RawInnerMessage, RawMessage, RawMessageType};
+
+        let messages = vec![
+            // First message is system metadata - should be skipped
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text(
+                        "<command-name>/clear</command-name>".to_string(),
+                    ),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+            // Second message is real content - should be used
+            RawMessage {
+                message_type: RawMessageType::User,
+                message: RawInnerMessage {
+                    content: RawContent::Text("Hello, this is my actual question".to_string()),
+                    role: Some("user".to_string()),
+                },
+                timestamp: None,
+                token_count: None,
+                uuid: None,
+                session_id: None,
+                cwd: None,
+            },
+        ];
+
+        let preview = generate_preview(&messages);
+        assert_eq!(preview, "Hello, this is my actual question");
+    }
+
+    #[test]
+    fn test_generate_preview_strips_embedded_tags() {
+        use crate::parser::jsonl::{RawContent, RawInnerMessage, RawMessage, RawMessageType};
+
+        let messages = vec![RawMessage {
+            message_type: RawMessageType::User,
+            message: RawInnerMessage {
+                content: RawContent::Text(
+                    "Hello <system-reminder>ignore this</system-reminder> World".to_string(),
+                ),
+                role: Some("user".to_string()),
+            },
+            timestamp: None,
+            token_count: None,
+            uuid: None,
+            session_id: None,
+            cwd: None,
+        }];
+
+        let preview = generate_preview(&messages);
+        assert_eq!(preview, "Hello  World");
+        assert!(!preview.contains("<system-reminder>"));
+    }
+
+    #[test]
+    fn test_generate_preview_all_metadata_returns_empty() {
+        use crate::parser::jsonl::{RawContent, RawInnerMessage, RawMessage, RawMessageType};
+
+        let messages = vec![RawMessage {
+            message_type: RawMessageType::User,
+            message: RawInnerMessage {
+                content: RawContent::Text(
+                    "<command-name>/clear</command-name>\n<command-message>clear</command-message>"
+                        .to_string(),
+                ),
+                role: Some("user".to_string()),
+            },
+            timestamp: None,
+            token_count: None,
+            uuid: None,
+            session_id: None,
+            cwd: None,
+        }];
+
         let preview = generate_preview(&messages);
         assert!(preview.is_empty());
     }

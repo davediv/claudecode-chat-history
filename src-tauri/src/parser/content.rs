@@ -17,7 +17,7 @@ static CODE_FENCE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// System metadata tag names that should be filtered from display.
 /// These are internal Claude Code system messages that shouldn't appear as user chat bubbles.
-const SYSTEM_METADATA_TAGS: &[&str] = &[
+pub const SYSTEM_METADATA_TAGS: &[&str] = &[
     "command-name",
     "command-message",
     "command-args",
@@ -30,6 +30,18 @@ const SYSTEM_METADATA_TAGS: &[&str] = &[
 static SYSTEM_METADATA_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<(command-name|command-message|command-args|local-command-caveat|local-command-stdout|system-reminder)[^>]*>")
         .expect("Invalid system metadata regex")
+});
+
+/// Pre-compiled regexes for stripping each system metadata tag type.
+/// Using LazyLock for efficient one-time compilation.
+static SYSTEM_METADATA_STRIP_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    SYSTEM_METADATA_TAGS
+        .iter()
+        .map(|tag| {
+            let pattern = format!(r"<{}[^>]*>[\s\S]*?</{}>", tag, tag);
+            Regex::new(&pattern).expect("Invalid metadata tag strip regex")
+        })
+        .collect()
 });
 
 /// Checks if content consists only of system metadata XML tags.
@@ -53,18 +65,32 @@ pub fn is_system_metadata_content(text: &str) -> bool {
         return false;
     }
 
-    // Strip all known metadata tags (including content between them) and check if anything meaningful remains
-    let mut remaining = trimmed.to_string();
-    for tag in SYSTEM_METADATA_TAGS {
-        // Remove complete elements: <tag>content</tag> or <tag attr="value">content</tag>
-        // Use [\s\S]*? for non-greedy matching of any content including newlines
-        let element_pattern =
-            Regex::new(&format!(r"<{}[^>]*>[\s\S]*?</{}>", tag, tag)).unwrap();
-        remaining = element_pattern.replace_all(&remaining, "").to_string();
-    }
+    // Strip all known metadata tags and check if anything meaningful remains
+    let remaining = strip_system_metadata_tags(trimmed);
 
     // If only whitespace remains, this was a metadata-only message
-    remaining.trim().is_empty()
+    remaining.is_empty()
+}
+
+/// Strips system metadata XML tags from text for display purposes.
+///
+/// Removes tags like `<command-name>`, `<command-message>`, `<system-reminder>`, etc.
+/// while preserving any other content. Uses pre-compiled regexes for efficiency.
+///
+/// # Examples
+/// ```ignore
+/// let text = "Hello <command-name>/clear</command-name> World";
+/// let result = strip_system_metadata_tags(text);
+/// assert_eq!(result, "Hello  World");
+/// ```
+pub fn strip_system_metadata_tags(text: &str) -> String {
+    let mut result = text.to_string();
+
+    for re in SYSTEM_METADATA_STRIP_REGEXES.iter() {
+        result = re.replace_all(&result, "").to_string();
+    }
+
+    result.trim().to_string()
 }
 
 /// Parses raw content into a vector of ContentBlocks.
@@ -976,5 +1002,56 @@ mod tests {
     fn test_is_system_metadata_nested_tags() {
         let content = "<command-name>/help</command-name>\n<local-command-caveat>This is a local command</local-command-caveat>\n<local-command-stdout>Output here</local-command-stdout>";
         assert!(is_system_metadata_content(content));
+    }
+
+    // ========== strip_system_metadata_tags tests ==========
+
+    #[test]
+    fn test_strip_system_metadata_tags_command_name() {
+        let text = "<command-name>/clear</command-name>";
+        let result = strip_system_metadata_tags(text);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_strip_system_metadata_tags_multiple() {
+        let text = "<command-name>/help</command-name>\n<command-message>help</command-message>";
+        let result = strip_system_metadata_tags(text);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_strip_system_metadata_tags_mixed_content() {
+        let text = "Hello <command-name>/clear</command-name> World";
+        let result = strip_system_metadata_tags(text);
+        assert_eq!(result, "Hello  World");
+    }
+
+    #[test]
+    fn test_strip_system_metadata_tags_plain_text() {
+        let text = "Hello, how can I help you?";
+        let result = strip_system_metadata_tags(text);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_strip_system_metadata_tags_system_reminder() {
+        let text = "<system-reminder>This is a reminder</system-reminder>";
+        let result = strip_system_metadata_tags(text);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_strip_system_metadata_tags_with_attributes() {
+        let text = r#"<command-name id="123" class="test">content</command-name>"#;
+        let result = strip_system_metadata_tags(text);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_strip_system_metadata_tags_preserves_other_xml() {
+        let text = "<unknown-tag>should stay</unknown-tag>";
+        let result = strip_system_metadata_tags(text);
+        assert_eq!(result, text);
     }
 }
