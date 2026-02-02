@@ -5,3 +5,4 @@ export { searchStore } from "./search.svelte";
 export { tagsStore } from "./tags.svelte";
 export { uiStore, showToast } from "./ui.svelte";
 export { toast, getToasts, addToast, dismissToast, clearAllToasts } from "./toast.svelte";
+export { groupedViewStore } from "./groupedView.svelte";
