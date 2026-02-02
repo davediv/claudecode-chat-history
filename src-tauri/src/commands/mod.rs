@@ -379,7 +379,7 @@ pub fn get_conversation(
 /// * `db` - Database state
 ///
 /// # Returns
-/// * `Vec<ProjectInfo>` - List of projects sorted alphabetically by name
+/// * `Vec<ProjectInfo>` - List of projects (unique by name) sorted alphabetically
 #[tauri::command]
 pub fn get_projects(db: State<'_, Arc<Database>>) -> Result<Vec<ProjectInfo>, CommandError> {
     debug!("get_projects");
@@ -387,11 +387,22 @@ pub fn get_projects(db: State<'_, Arc<Database>>) -> Result<Vec<ProjectInfo>, Co
     db.with_connection(|conn| {
         let mut stmt = conn.prepare(
             r#"
-            SELECT project_path, project_name, COUNT(*) as conversation_count, MAX(last_time) as last_activity
-            FROM conversations
-            WHERE is_subagent = 0
-            GROUP BY project_path, project_name
-            ORDER BY project_name ASC
+            SELECT
+                (
+                    SELECT c2.project_path
+                    FROM conversations c2
+                    WHERE c2.project_name = c.project_name
+                      AND c2.is_subagent = 0
+                    ORDER BY c2.last_time DESC, c2.project_path ASC
+                    LIMIT 1
+                ) as project_path,
+                c.project_name,
+                COUNT(*) as conversation_count,
+                MAX(c.last_time) as last_activity
+            FROM conversations c
+            WHERE c.is_subagent = 0
+            GROUP BY c.project_name
+            ORDER BY c.project_name ASC
             "#,
         )?;
 
@@ -1012,7 +1023,7 @@ mod tests {
 
         let result = db.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT project_path, project_name, COUNT(*) as conversation_count, MAX(last_time) as last_activity FROM conversations GROUP BY project_path, project_name ORDER BY project_name ASC"
+                "SELECT (SELECT c2.project_path FROM conversations c2 WHERE c2.project_name = c.project_name AND c2.is_subagent = 0 ORDER BY c2.last_time DESC, c2.project_path ASC LIMIT 1) as project_path, c.project_name, COUNT(*) as conversation_count, MAX(c.last_time) as last_activity FROM conversations c WHERE c.is_subagent = 0 GROUP BY c.project_name ORDER BY c.project_name ASC"
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok(ProjectInfo {
@@ -1042,12 +1053,12 @@ mod tests {
             )?;
             conn.execute(
                 r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
-                VALUES ('conv2', '/path/to/alpha', 'alpha-project', '2025-01-01T00:00:00Z', '2025-01-15T00:00:00Z', 'Test', 3, 50, 100, '/test/file2.jsonl', '2025-01-01T00:00:00Z')"#,
+                VALUES ('conv2', '/path/to/alpha-old', 'alpha-project', '2025-01-01T00:00:00Z', '2025-01-15T00:00:00Z', 'Test', 3, 50, 100, '/test/file2.jsonl', '2025-01-01T00:00:00Z')"#,
                 [],
             )?;
             conn.execute(
                 r#"INSERT INTO conversations (id, project_path, project_name, start_time, last_time, preview, message_count, total_input_tokens, total_output_tokens, file_path, file_modified_at)
-                VALUES ('conv3', '/path/to/alpha', 'alpha-project', '2025-01-02T00:00:00Z', '2025-01-20T00:00:00Z', 'Test', 7, 150, 300, '/test/file3.jsonl', '2025-01-02T00:00:00Z')"#,
+                VALUES ('conv3', '/path/to/alpha-latest', 'alpha-project', '2025-01-02T00:00:00Z', '2025-01-20T00:00:00Z', 'Test', 7, 150, 300, '/test/file3.jsonl', '2025-01-02T00:00:00Z')"#,
                 [],
             )?;
             Ok(())
@@ -1055,7 +1066,7 @@ mod tests {
 
         let result = db.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT project_path, project_name, COUNT(*) as conversation_count, MAX(last_time) as last_activity FROM conversations GROUP BY project_path, project_name ORDER BY project_name ASC"
+                "SELECT (SELECT c2.project_path FROM conversations c2 WHERE c2.project_name = c.project_name AND c2.is_subagent = 0 ORDER BY c2.last_time DESC, c2.project_path ASC LIMIT 1) as project_path, c.project_name, COUNT(*) as conversation_count, MAX(c.last_time) as last_activity FROM conversations c WHERE c.is_subagent = 0 GROUP BY c.project_name ORDER BY c.project_name ASC"
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok(ProjectInfo {
@@ -1074,6 +1085,7 @@ mod tests {
         assert_eq!(result[0].project_name, "alpha-project");
         assert_eq!(result[0].conversation_count, 2);
         assert_eq!(result[0].last_activity, "2025-01-20T00:00:00Z");
+        assert_eq!(result[0].project_path, "/path/to/alpha-latest");
 
         assert_eq!(result[1].project_name, "zebra-project");
         assert_eq!(result[1].conversation_count, 1);
